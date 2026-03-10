@@ -15,6 +15,8 @@ from typing import Optional
 from fastapi import Body
 from ...services.deletion_manager import DeletionManager
 
+import os
+from datetime import datetime
 # ==================== 对话管理端点 ====================
 
 @router.post("/conversations/", response_model=schemas.Conversation)
@@ -410,13 +412,17 @@ async def send_message(
 
 # ==================== 分支创建端点 ====================
 
-@router.post("/branch/", response_model=schemas.Thread)
+@router.post("/branch/")
 async def create_branch(
     request: schemas.CreateBranchRequest,
     db: Session = Depends(get_db)
 ):
-    """创建新的对话分支"""
+    """创建新的对话分支（仅限最新消息 + 深度限制）"""
     try:
+        # ===== 新增：读取配置（文件顶部需导入 os）=====
+        MAX_BRANCH_DEPTH = int(os.getenv("BRANCH_MAX_DEPTH", "3"))
+        # ============================================
+        
         # 1. 验证对话存在
         conversation = db.query(models.Conversation)\
             .filter(models.Conversation.id == request.conversation_id)\
@@ -441,21 +447,42 @@ async def create_branch(
         if not parent_thread:
             raise HTTPException(status_code=404, detail="父消息所在线程不存在")
         
-        # 4. 获取父消息之前的所有消息
-        # 获取线程中的所有消息
+        # ===== 新增校验1：必须是线程最新消息 =====
+        # 查询该线程的最新消息
+        latest_message_in_thread = db.query(models.Message)\
+            .filter(models.Message.thread_id == parent_message.thread_id)\
+            .order_by(models.Message.created_at.desc())\
+            .first()
+        
+        if not latest_message_in_thread:
+            raise HTTPException(status_code=400, detail="线程无消息，无法创建分支")
+        
+        if request.parent_message_id != latest_message_in_thread.id:
+            raise HTTPException(
+                status_code=400,
+                detail="仅允许在当前线程的最新消息处创建分支。请切换到目标线程查看最新对话。"
+            )
+        # ============================================
+        
+        # ===== 新增校验2：深度限制 =====
+        # 注意：主分支 depth=0，一级分支 depth=1，二级分支 depth=2，三级分支 depth=3（已达上限）
+        if parent_thread.depth >= MAX_BRANCH_DEPTH:
+            raise HTTPException(
+                status_code=400,
+                detail=f"分支深度已达上限（{MAX_BRANCH_DEPTH}层）。当前深度：{parent_thread.depth}层，请在更上层对话创建分支。"
+            )
+        # ============================================
+        
+        # 4. 获取父消息之前的所有消息（此时parent_message必为最新，故获取全部历史）
         thread_messages = db.query(models.Message)\
             .filter(models.Message.thread_id == parent_message.thread_id)\
             .order_by(models.Message.created_at.asc())\
             .all()
         
-        # 找到指定消息的位置
-        history_messages = []
-        for msg in thread_messages:
-            history_messages.append(msg)
-            if msg.id == parent_message.id:
-                break
+        # 由于校验了是最新消息，history_messages 即为完整线程历史
+        history_messages = thread_messages  # 简化逻辑：直接使用全部消息
         
-        # 5. 创建新线程
+        # 5. 创建新线程（关键：设置 depth = 父线程 depth + 1）
         thread_title = f"分支-{parent_thread.title}" if parent_thread.title else f"分支-{parent_thread.id}"
         new_thread = models.Thread(
             conversation_id=request.conversation_id,
@@ -463,13 +490,14 @@ async def create_branch(
             title=thread_title,
             is_active=True,
             created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow()
+            updated_at=datetime.utcnow(),
+            depth=parent_thread.depth + 1  # ===== 核心：继承父深度+1 =====
         )
         db.add(new_thread)
         db.commit()
         db.refresh(new_thread)
         
-        # 6. 复制历史消息到新线程
+        # 6. 复制历史消息到新线程（逻辑不变）
         message_map = {}  # 用于映射旧消息ID到新消息ID
         
         for msg in history_messages:
@@ -487,7 +515,7 @@ async def create_branch(
             db.refresh(new_msg)
             message_map[msg.id] = new_msg.id
         
-        # 7. 如果有新消息，添加到新线程
+        # 7. 如果有新消息，添加到新线程（逻辑不变）
         if request.new_message_content:
             new_user_msg = models.Message(
                 thread_id=new_thread.id,
@@ -499,7 +527,7 @@ async def create_branch(
             db.add(new_user_msg)
             db.commit()
         
-        # 8. 将新线程设为活跃，其他线程设为非活跃
+        # 8. 将新线程设为活跃，其他线程设为非活跃（逻辑不变）
         db.query(models.Thread)\
             .filter(
                 models.Thread.conversation_id == request.conversation_id,
@@ -508,7 +536,11 @@ async def create_branch(
             .update({"is_active": False})
         db.commit()
         
-        return new_thread
+        return {
+            "data": schemas.Thread.from_orm(new_thread),
+            "code": 200,
+            "message": "Branch created successfully"
+        }
         
     except HTTPException:
         raise

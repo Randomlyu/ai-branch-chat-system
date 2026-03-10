@@ -7,11 +7,19 @@
     >
       <span class="thread-icon">🌿</span>
       <span class="thread-title">{{ thread.title || `分支-${thread.id}` }}</span>
-      <span class="thread-toggle" v-if="thread.children && thread.children.length > 0" @click.stop="toggle">
+      <!-- 仅新增：安全显示深度（后端返回depth时显示） -->
+      <span v-if="thread.depth !== undefined" class="depth-badge">
+        {{ thread.depth }}
+      </span>
+      <span 
+        v-if="thread.children?.length" 
+        class="thread-toggle" 
+        @click.stop="toggle"
+      >
         {{ isExpanded ? '−' : '+' }}
       </span>
     </div>
-    <div v-if="isExpanded && thread.children" class="thread-children">
+    <div v-if="isExpanded && thread.children?.length" class="thread-children">
       <ThreadTreeNode
         v-for="child in thread.children"
         :key="child.id"
@@ -26,11 +34,13 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 
+// 严格遵循您已定义的接口（仅扩展depth字段）
 interface ThreadTree {
   id: number
   title?: string
   parent_message_id?: number
   children?: ThreadTree[]
+  depth?: number  // ✅ 仅新增此字段（与后端一致）
 }
 
 defineProps<{
@@ -49,6 +59,22 @@ const toggle = () => {
 </script>
 
 <style scoped>
+/* 仅新增深度徽章样式（与现有样式兼容） */
+.depth-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #e0e7ff;
+  color: #4f46e5;
+  font-size: 10px;
+  font-weight: 600;
+  margin-left: 4px;
+}
+
+/* 保留原有样式（无改动） */
 .thread-node {
   margin-left: 16px;
   border-left: 1px dashed rgba(0, 0, 0, 0.15);
