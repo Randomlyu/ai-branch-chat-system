@@ -130,12 +130,15 @@
               >
                   <span class="icon">🔄</span>
               </button>
+              <!-- 消息操作按钮 -->
               <button 
                  class="btn-action" 
                  @click="createBranchFromMessage(msg.id)"
-                 title="从此回复创建分支"
+                 :disabled="!canCreateBranch(msg)"
+                 :title="getBranchButtonTitle(msg)"
+                 :class="{ 'disabled': !canCreateBranch(msg) }"
               >
-                 <span class="icon">🌿</span> 分支
+                <span class="icon">🌿</span> 分支
               </button>
             </div>
           </div>
@@ -147,6 +150,12 @@
           <div class="thinking-text">AI正在思考...</div>
         </div>
       </div>
+      <!-- 深度提示 -->
+      <BranchDepthHint 
+         v-if="currentThread"
+         :currentDepth="currentThread.depth || 0"
+         :maxDepth="3"
+      />
 
       <!-- 输入区域 -->
       <div class="input-container">
@@ -213,7 +222,8 @@ import { storeToRefs } from 'pinia'
 import { useChatStore } from '@/stores/chat'
 import ThreadTreeNode from '@/components/ThreadTreeNode.vue'
 import type { Conversation } from '@/types/chat'
-
+import BranchDepthHint from '@/components/BranchDepthHint.vue'
+import type { Message } from '@/types/chat'
 
 // ---------- 状态与Store ----------
 const chatStore = useChatStore()
@@ -259,14 +269,91 @@ const sendMessage = async () => {
   inputTextarea.value?.focus()
 }
 
+// ---------- 分支相关方法 ----------
+
+// 安全获取最新消息的辅助函数
+const getLatestMessage = (): Message | null => {
+  if (messages.value.length === 0) return null
+  const latest = messages.value[messages.value.length - 1]
+  return latest || null
+}
+
 const createBranchFromMessage = async (messageId: number) => {
-  const newThread = await chatStore.createBranch(messageId)
-  if (newThread) {
-    // 成功创建分支后，系统应自动切换到新线程，此处只需滚动到底部
-    nextTick(() => {
-      scrollToBottom()
-    })
+  // 检查1: 当前线程是否存在深度信息
+  if (currentThread.value?.depth !== undefined && currentThread.value.depth >= 3) {
+    showToast('分支深度已达上限（3层），无法创建更深层的分支', 'error')
+    return
   }
+  
+  // 安全获取最新消息
+  const latestMessage = getLatestMessage()
+  if (!latestMessage) {
+    showToast('当前没有消息，无法创建分支', 'error')
+    return
+  }
+  
+  // 检查2: 是否是最新消息
+  if (messageId !== latestMessage.id) {
+    showToast('只能在最新消息处创建分支', 'error')
+    return
+  }
+  
+  // 检查3: 只能是AI消息
+  if (latestMessage.role !== 'assistant') {
+    showToast('只能在AI回复处创建分支', 'error')
+    return
+  }
+  
+  try {
+    const newThread = await chatStore.createBranch(messageId)
+    if (newThread) {
+      showToast('分支创建成功')
+      nextTick(() => {
+        scrollToBottom()
+      })
+    }
+  } catch (error: unknown) {
+    // 错误信息已由store处理
+    console.error('创建分支失败:', error)
+  }
+}
+
+// 检查是否可以在此消息创建分支
+const canCreateBranch = (msg: Message) => {
+  // 必须是AI消息
+  if (msg.role !== 'assistant') return false
+  
+  // 当前线程深度不能超过3
+  if (currentThread.value?.depth !== undefined && currentThread.value.depth >= 3) {
+    return false
+  }
+  
+  const latestMessage = getLatestMessage()
+  if (!latestMessage) return false
+  
+  return msg.id === latestMessage.id
+}
+
+// 获取分支按钮的提示文本
+const getBranchButtonTitle = (msg: Message) => {
+  if (msg.role !== 'assistant') {
+    return '只能在AI回复处创建分支'
+  }
+  
+  if (currentThread.value?.depth !== undefined && currentThread.value.depth >= 3) {
+    return '分支深度已达上限（3层）'
+  }
+  
+  const latestMessage = getLatestMessage()
+  if (!latestMessage) {
+    return '当前没有消息'
+  }
+  
+  if (msg.id !== latestMessage.id) {
+    return '只能在最新消息处创建分支'
+  }
+  
+  return '从此回复创建新分支'
 }
 
 const switchThread = async (threadId: number) => {
@@ -277,6 +364,7 @@ const switchThread = async (threadId: number) => {
 const refreshThreadTree = () => {
   chatStore.fetchThreadTree()
 }
+
 
 // ---------- 消息操作方法 ----------
 const copyMessage = async (content: string) => {
@@ -1033,6 +1121,17 @@ button:hover {
     transform: translateX(-50%) translateY(0);
     opacity: 1;
   }
+}
+
+/* 禁用按钮样式 */
+.btn-action.disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+.btn-action.disabled:hover {
+  background: rgba(0, 0, 0, 0.04);
 }
 
 </style>

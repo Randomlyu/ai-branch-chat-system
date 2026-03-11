@@ -238,39 +238,68 @@ const deleteConversation = async (conversationId: number): Promise<void> => {
     }
   }
 
-  // 创建分支
-  const createBranch = async (parentMessageId: number, newMessageContent?: string): Promise<Thread | null> => {
-    if (!currentConversation.value) {
-      console.error('没有活跃的对话')
-      return null
+// 创建分支
+const createBranch = async (parentMessageId: number, newMessageContent?: string): Promise<Thread | null> => {
+  if (!currentConversation.value) {
+    const errorMsg = '没有活跃的对话，请先创建或选择对话'
+    console.error(errorMsg)
+    error.value = errorMsg
+    throw new Error(errorMsg)
+  }
+  
+  try {
+    isLoading.value = true
+    const response = await chatApi.createBranch({
+      conversation_id: currentConversation.value.id,
+      parent_message_id: parentMessageId,
+      new_message_content: newMessageContent
+    })
+    
+    const newThread = response.data
+    
+    // 切换到新分支
+    await switchThread(newThread.id)
+    
+    // 刷新分支树
+    await fetchThreadTree()
+    
+    error.value = null
+    return newThread
+  } catch (err: unknown) {
+    let errorMessage = '创建分支失败'
+    
+    if (err && typeof err === 'object') {
+      // 处理 Axios 错误响应
+      if ('response' in err && err.response) {
+        const axiosError = err as { response: { data: { detail?: string; message?: string } } }
+        
+        if (axiosError.response.data?.detail) {
+          const detail = axiosError.response.data.detail
+          
+          if (detail.includes('分支深度已达上限')) {
+            errorMessage = '分支深度已达上限（3层），请在更上层创建分支'
+          } else if (detail.includes('仅允许在当前线程的最新消息处创建分支')) {
+            errorMessage = '只能在当前对话的最新消息处创建分支'
+          } else if (detail.includes('线程无消息')) {
+            errorMessage = '当前线程没有消息，无法创建分支'
+          } else {
+            errorMessage = detail
+          }
+        } else if (axiosError.response.data?.message) {
+          errorMessage = axiosError.response.data.message
+        }
+      } else if ('message' in err && typeof err.message === 'string') {
+        errorMessage = err.message
+      }
     }
     
-    try {
-      isLoading.value = true
-      const response = await chatApi.createBranch({
-        conversation_id: currentConversation.value.id,
-        parent_message_id: parentMessageId,
-        new_message_content: newMessageContent
-      })
-      
-      const newThread = response.data
-      
-      // 切换到新分支
-      await switchThread(newThread.id)
-      
-      // 刷新分支树
-      await fetchThreadTree()
-      
-      error.value = null
-      return newThread
-    } catch (err: unknown) {
-      console.error('创建分支失败:', err)
-      error.value = err instanceof Error ? err.message : '创建分支失败'
-      throw err
-    } finally {
-      isLoading.value = false
-    }
+    console.error('创建分支失败:', err)
+    error.value = errorMessage
+    throw new Error(errorMessage)
+  } finally {
+    isLoading.value = false
   }
+}
 
   // 切换线程
   const switchThread = async (threadId: number): Promise<void> => {

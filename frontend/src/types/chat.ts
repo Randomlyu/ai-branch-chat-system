@@ -15,6 +15,7 @@ export interface Thread {
   is_active: boolean
   created_at: string
   updated_at: string
+  depth: number 
 }
 
 export interface Message {
@@ -58,6 +59,7 @@ export interface ThreadTree {
   conversation_id: number
   parent_message_id?: number
   title?: string
+  depth: number 
   is_active: boolean
   created_at: string
   updated_at: string

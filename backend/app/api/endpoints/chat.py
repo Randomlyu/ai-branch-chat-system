@@ -16,7 +16,15 @@ from fastapi import Body
 from ...services.deletion_manager import DeletionManager
 
 import os
-from datetime import datetime
+from dotenv import load_dotenv
+
+# 加载环境变量
+load_dotenv()
+
+# 读取配置
+MAX_BRANCH_DEPTH = int(os.getenv("BRANCH_MAX_DEPTH", "3"))
+BRANCH_ONLY_AT_LATEST = os.getenv("BRANCH_ONLY_AT_LATEST", "true").lower() == "true"
+
 # ==================== 对话管理端点 ====================
 
 @router.post("/conversations/", response_model=schemas.Conversation)
@@ -249,7 +257,8 @@ def get_conversation_thread_tree(
             "parent_message_id": node.parent_message_id,
             "is_active": node.is_active,
             "created_at": node.created_at.isoformat() if node.created_at else None,
-            "updated_at": node.updated_at.isoformat() if node.updated_at else None
+            "updated_at": node.updated_at.isoformat() if node.updated_at else None,
+            "depth": node.depth #新增
         }
         
         if node.id in children:
@@ -419,10 +428,6 @@ async def create_branch(
 ):
     """创建新的对话分支（仅限最新消息 + 深度限制）"""
     try:
-        # ===== 新增：读取配置（文件顶部需导入 os）=====
-        MAX_BRANCH_DEPTH = int(os.getenv("BRANCH_MAX_DEPTH", "3"))
-        # ============================================
-        
         # 1. 验证对话存在
         conversation = db.query(models.Conversation)\
             .filter(models.Conversation.id == request.conversation_id)\
