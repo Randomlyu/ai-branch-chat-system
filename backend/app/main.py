@@ -1,10 +1,9 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, status, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from .api.endpoints import chat
 from .database import engine
 from . import models
 
-from fastapi import FastAPI, Depends
 from .auth import LoginRequest, LoginResponse, FIXED_USERS, get_current_user
 
 # 创建数据库表
