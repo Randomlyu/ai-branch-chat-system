@@ -1,22 +1,20 @@
-from typing import List, Dict, Any
-from fastapi import APIRouter, Depends, HTTPException, status
+from typing import List, Dict, Any, Optional
+from fastapi import APIRouter, Depends, HTTPException, status, Body
 from sqlalchemy.orm import Session
 from datetime import datetime
 import logging
+import os
+from dotenv import load_dotenv
 
 from ...database import get_db
 from ... import models, schemas
 from ...services import ai_service
+from ...services.deletion_manager import DeletionManager
+# 从新的auth模块导入认证依赖
+from ...auth import get_current_user
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
-
-from typing import Optional
-from fastapi import Body
-from ...services.deletion_manager import DeletionManager
-
-import os
-from dotenv import load_dotenv
 
 # 加载环境变量
 load_dotenv()
@@ -30,14 +28,15 @@ BRANCH_ONLY_AT_LATEST = os.getenv("BRANCH_ONLY_AT_LATEST", "true").lower() == "t
 @router.post("/conversations/", response_model=schemas.Conversation)
 def create_conversation(
     conversation: schemas.ConversationCreate,
+    current_user: dict = Depends(get_current_user),  # 添加认证
     db: Session = Depends(get_db)
 ):
     """创建新对话"""
     try:
-        # 使用默认用户ID 1（开发阶段）
+        # 使用认证用户ID
         db_conversation = models.Conversation(
             title=conversation.title,
-            user_id=1,
+            user_id=current_user["id"],  # 使用认证用户ID
             created_at=datetime.utcnow(),
             updated_at=datetime.utcnow()
         )
@@ -49,8 +48,9 @@ def create_conversation(
         # 创建默认的主线程
         db_thread = models.Thread(
             conversation_id=db_conversation.id,
-            title="主分支",
+            title="主对话",  # 修改为"主对话"更友好
             is_active=True,
+            depth=0,  # 主线程深度为0
             created_at=datetime.utcnow(),
             updated_at=datetime.utcnow()
         )
@@ -72,15 +72,19 @@ def create_conversation(
 def read_conversations(
     skip: int = 0,
     limit: int = 100,
+    current_user: dict = Depends(get_current_user),  # 添加认证
     db: Session = Depends(get_db)
 ):
-    """获取对话列表（按更新时间倒序）"""
+    """获取当前用户的对话列表（按更新时间倒序）"""
     try:
-        conversations = db.query(models.Conversation)\
-            .order_by(models.Conversation.updated_at.desc())\
-            .offset(skip)\
-            .limit(limit)\
-            .all()
+        conversations = (
+           db.query(models.Conversation)
+           .filter(models.Conversation.user_id == current_user["id"])  # 只返回当前用户的对话
+           .order_by(models.Conversation.updated_at.desc())
+           .offset(skip)
+           .limit(limit)
+           .all()
+        )
         return conversations
     except Exception as e:
         logger.error(f"获取对话列表失败: {str(e)}")
@@ -93,6 +97,7 @@ def read_conversations(
 @router.get("/conversations/{conversation_id}", response_model=schemas.Conversation)
 def read_conversation(
     conversation_id: int,
+    current_user: dict = Depends(get_current_user),  # 添加认证
     db: Session = Depends(get_db)
 ):
     """获取对话详情"""
@@ -106,6 +111,13 @@ def read_conversation(
             detail="对话不存在"
         )
     
+    # 验证所有权
+    if db_conversation.user_id != current_user["id"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="无权访问此对话"
+        )
+    
     return db_conversation
 
 
@@ -113,6 +125,7 @@ def read_conversation(
 def update_conversation(
     conversation_id: int,
     conversation: schemas.ConversationUpdate,
+    current_user: dict = Depends(get_current_user),  # 添加认证
     db: Session = Depends(get_db)
 ):
     """更新对话标题"""
@@ -124,6 +137,13 @@ def update_conversation(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="对话不存在"
+        )
+    
+    # 验证所有权
+    if db_conversation.user_id != current_user["id"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="无权修改此对话"
         )
     
     # 只更新提供的字段
@@ -141,18 +161,35 @@ def update_conversation(
 @router.delete("/conversations/{conversation_id}")
 def delete_conversation(
     conversation_id: int,
-    user_id: Optional[int] = Body(None, embed=True),  # 未来支持多用户
+    current_user: dict = Depends(get_current_user),  # 添加认证
     db: Session = Depends(get_db)
 ):
     """
     删除对话
     """
     try:
+        # 验证对话存在和所有权
+        conversation = db.query(models.Conversation)\
+            .filter(models.Conversation.id == conversation_id)\
+            .first()
+        
+        if conversation is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="对话不存在"
+            )
+        
+        if conversation.user_id != current_user["id"]:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="无权删除此对话"
+            )
+        
         # 创建删除管理器
         manager = DeletionManager(db)
         
         # 执行删除
-        success, message = manager.delete_conversation(conversation_id, user_id)
+        success, message = manager.delete_conversation(conversation_id, current_user["id"])
         
         if not success:
             raise HTTPException(
@@ -177,10 +214,11 @@ def delete_conversation(
 @router.get("/conversations/{conversation_id}/threads", response_model=List[schemas.Thread])
 def get_conversation_threads(
     conversation_id: int,
+    current_user: dict = Depends(get_current_user),  # 添加认证
     db: Session = Depends(get_db)
 ):
     """获取对话的所有线程"""
-    # 验证对话是否存在
+    # 验证对话是否存在和所有权
     conversation = db.query(models.Conversation)\
         .filter(models.Conversation.id == conversation_id)\
         .first()
@@ -189,6 +227,12 @@ def get_conversation_threads(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="对话不存在"
+        )
+    
+    if conversation.user_id != current_user["id"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="无权访问此对话"
         )
     
     # 获取对话的所有线程
@@ -203,10 +247,11 @@ def get_conversation_threads(
 @router.get("/conversations/{conversation_id}/thread-tree")
 def get_conversation_thread_tree(
     conversation_id: int,
+    current_user: dict = Depends(get_current_user),  # 添加认证
     db: Session = Depends(get_db)
 ):
     """获取对话的线程树结构，用于前端可视化"""
-    # 验证对话是否存在
+    # 验证对话是否存在和所有权
     conversation = db.query(models.Conversation)\
         .filter(models.Conversation.id == conversation_id)\
         .first()
@@ -215,6 +260,12 @@ def get_conversation_thread_tree(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="对话不存在"
+        )
+    
+    if conversation.user_id != current_user["id"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="无权访问此对话"
         )
     
     # 获取对话的所有线程
@@ -258,7 +309,7 @@ def get_conversation_thread_tree(
             "is_active": node.is_active,
             "created_at": node.created_at.isoformat() if node.created_at else None,
             "updated_at": node.updated_at.isoformat() if node.updated_at else None,
-            "depth": node.depth #新增
+            "depth": node.depth
         }
         
         if node.id in children:
@@ -279,6 +330,7 @@ def get_conversation_thread_tree(
 @router.get("/threads/{thread_id}", response_model=schemas.Thread)
 def get_thread(
     thread_id: int,
+    current_user: dict = Depends(get_current_user),  # 添加认证
     db: Session = Depends(get_db)
 ):
     """获取线程详情"""
@@ -292,12 +344,68 @@ def get_thread(
             detail="线程不存在"
         )
     
+    # 验证对话所有权
+    conversation = db.query(models.Conversation)\
+        .filter(models.Conversation.id == thread.conversation_id)\
+        .first()
+    
+    if conversation and conversation.user_id != current_user["id"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="无权访问此线程"
+        )
+    
+    return thread
+
+@router.put("/threads/{thread_id}", response_model=schemas.Thread)
+def update_thread_title(
+    thread_id: int,
+    thread_update: schemas.ThreadUpdate,  # 需要创建这个Pydantic模型
+    current_user: dict = Depends(get_current_user),  # 添加认证
+    db: Session = Depends(get_db)
+):
+    """更新线程标题"""
+    thread = db.query(models.Thread)\
+        .filter(models.Thread.id == thread_id)\
+        .first()
+    
+    if thread is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="线程不存在"
+        )
+    
+    # 验证对话所有权
+    conversation = db.query(models.Conversation)\
+        .filter(models.Conversation.id == thread.conversation_id)\
+        .first()
+    
+    if conversation is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="对话不存在"
+        )
+    
+    if conversation.user_id != current_user["id"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="无权修改此线程"
+        )
+    
+    # 更新标题
+    thread.title = thread_update.title
+    thread.updated_at = datetime.utcnow()
+    
+    db.commit()
+    db.refresh(thread)
+    
     return thread
 
 
 @router.get("/threads/{thread_id}/messages", response_model=List[schemas.Message])
 def get_thread_messages(
     thread_id: int,
+    current_user: dict = Depends(get_current_user),  # 添加认证
     db: Session = Depends(get_db)
 ):
     """获取线程的所有消息"""
@@ -310,6 +418,17 @@ def get_thread_messages(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="线程不存在"
+        )
+    
+    # 验证对话所有权
+    conversation = db.query(models.Conversation)\
+        .filter(models.Conversation.id == thread.conversation_id)\
+        .first()
+    
+    if conversation and conversation.user_id != current_user["id"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="无权访问此线程"
         )
     
     # 获取线程的所有消息
@@ -326,6 +445,7 @@ def get_thread_messages(
 @router.post("/chat/", response_model=schemas.SendMessageResponse)
 async def send_message(
     request: schemas.SendMessageRequest,
+    current_user: dict = Depends(get_current_user),  # 添加认证
     db: Session = Depends(get_db)
 ):
     """发送消息并获取AI回复"""
@@ -334,6 +454,14 @@ async def send_message(
         thread = db.query(models.Thread).filter(models.Thread.id == request.thread_id).first()
         if not thread:
             raise HTTPException(status_code=404, detail="线程不存在")
+        
+        # 验证对话所有权
+        conversation = db.query(models.Conversation)\
+            .filter(models.Conversation.id == thread.conversation_id)\
+            .first()
+        
+        if conversation and conversation.user_id != current_user["id"]:
+            raise HTTPException(status_code=403, detail="无权在此对话中发送消息")
         
         # 2. 获取父消息（用于构建消息链）
         parent_message = None
@@ -424,17 +552,21 @@ async def send_message(
 @router.post("/branch/")
 async def create_branch(
     request: schemas.CreateBranchRequest,
+    current_user: dict = Depends(get_current_user),  # 添加认证
     db: Session = Depends(get_db)
 ):
     """创建新的对话分支（仅限最新消息 + 深度限制）"""
     try:
-        # 1. 验证对话存在
+        # 1. 验证对话存在和所有权
         conversation = db.query(models.Conversation)\
             .filter(models.Conversation.id == request.conversation_id)\
             .first()
         
         if not conversation:
             raise HTTPException(status_code=404, detail="对话不存在")
+        
+        if conversation.user_id != current_user["id"]:
+            raise HTTPException(status_code=403, detail="无权在此对话中创建分支")
         
         # 2. 验证父消息存在
         parent_message = db.query(models.Message)\
@@ -487,12 +619,24 @@ async def create_branch(
         # 由于校验了是最新消息，history_messages 即为完整线程历史
         history_messages = thread_messages  # 简化逻辑：直接使用全部消息
         
-        # 5. 创建新线程（关键：设置 depth = 父线程 depth + 1）
-        thread_title = f"分支-{parent_thread.title}" if parent_thread.title else f"分支-{parent_thread.id}"
+        # 5. 获取当前对话的线程数（用于生成标题）
+        thread_count = db.query(models.Thread)\
+            .filter(models.Thread.conversation_id == request.conversation_id)\
+            .count()
+        
+        # 6. 生成智能分支标题
+        # 调用ai_service中的函数生成标题
+        thread_title = ai_service.generate_branch_title(
+            parent_message_content=parent_message.content,
+            thread_count=thread_count + 1,  # 加1是因为新线程即将创建
+            depth=parent_thread.depth + 1
+        )
+        
+        # 7. 创建新线程（关键：设置 depth = 父线程 depth + 1）
         new_thread = models.Thread(
             conversation_id=request.conversation_id,
             parent_message_id=request.parent_message_id,
-            title=thread_title,
+            title=thread_title,  # 使用智能生成的标题
             is_active=True,
             created_at=datetime.utcnow(),
             updated_at=datetime.utcnow(),
@@ -502,7 +646,7 @@ async def create_branch(
         db.commit()
         db.refresh(new_thread)
         
-        # 6. 复制历史消息到新线程（逻辑不变）
+        # 8. 复制历史消息到新线程
         message_map = {}  # 用于映射旧消息ID到新消息ID
         
         for msg in history_messages:
@@ -520,7 +664,7 @@ async def create_branch(
             db.refresh(new_msg)
             message_map[msg.id] = new_msg.id
         
-        # 7. 如果有新消息，添加到新线程（逻辑不变）
+        # 9. 如果有新消息，添加到新线程
         if request.new_message_content:
             new_user_msg = models.Message(
                 thread_id=new_thread.id,
@@ -532,7 +676,7 @@ async def create_branch(
             db.add(new_user_msg)
             db.commit()
         
-        # 8. 将新线程设为活跃，其他线程设为非活跃（逻辑不变）
+        # 10. 将新线程设为活跃，其他线程设为非活跃
         db.query(models.Thread)\
             .filter(
                 models.Thread.conversation_id == request.conversation_id,

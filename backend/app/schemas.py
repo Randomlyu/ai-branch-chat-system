@@ -2,6 +2,8 @@ from typing import Optional, List, Dict, Any
 from pydantic import BaseModel, ConfigDict
 from datetime import datetime
 
+class ThreadUpdate(BaseModel):
+    title: str
 
 # 基础模型
 class MessageBase(BaseModel):
