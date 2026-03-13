@@ -48,7 +48,9 @@
             @click="toggleMenu"
             aria-label="更多操作"
           >
-            <span class="thread-actions-dots"></span>
+            <span class="thread-actions-dots">
+              <span class="dot-middle"></span>
+            </span>
           </button>
           
           <!-- 下拉菜单 -->
@@ -519,7 +521,8 @@ onBeforeUnmount(() => {
 }
 
 .thread-actions-dots::before,
-.thread-actions-dots::after {
+.thread-actions-dots::after,
+.thread-actions-dots .dot-middle {
   content: '';
   display: block;
   width: 4px;
@@ -529,12 +532,9 @@ onBeforeUnmount(() => {
   margin: 0 auto;
 }
 
-.thread-actions-dots::before {
-  margin-bottom: 2px;
-}
-
-.thread-actions-dots::after {
-  margin-top: 2px;
+/* 中间点的样式 */
+.thread-actions-dots .dot-middle {
+  flex-shrink: 0;
 }
 
 .thread-actions-btn:hover .thread-actions-dots::before,
