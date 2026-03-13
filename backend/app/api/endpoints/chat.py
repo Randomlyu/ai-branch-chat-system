@@ -499,7 +499,7 @@ async def send_message(
         # 5. 调用AI服务
         model = request.model or "deepseek-chat"
         try:
-            ai_response = ai_service.ai_service.chat_completion(
+            ai_response = ai_service.chat_completion(
                 messages=ai_messages,
                 model=model
             )
@@ -625,10 +625,22 @@ async def create_branch(
             .count()
         
         # 6. 生成智能分支标题
-        # 调用ai_service中的函数生成标题
+        # 首先尝试获取用户的问题
+        user_question_content = None
+        if parent_message.parent_id:
+            # 查找父消息的父消息（用户提问）
+            user_question = db.query(models.Message)\
+              .filter(models.Message.id == parent_message.parent_id)\
+              .first()
+            if user_question and user_question.role == "user":
+                user_question_content = user_question.content
+
+        # 优先使用用户问题生成标题，如果没有则使用AI回复
+        title_source = user_question_content if user_question_content else parent_message.content
+
         thread_title = ai_service.generate_branch_title(
-            parent_message_content=parent_message.content,
-            thread_count=thread_count + 1,  # 加1是因为新线程即将创建
+            parent_message_content=title_source,  # 使用用户问题或AI回复
+            thread_count=thread_count + 1,
             depth=parent_thread.depth + 1
         )
         

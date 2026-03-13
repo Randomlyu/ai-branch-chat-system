@@ -53,6 +53,11 @@ export interface CreateBranchRequest {
   new_message_content?: string
 }
 
+// 添加 ThreadUpdate 接口
+export interface ThreadUpdate {
+  title: string
+}
+
 // 分支树类型
 export interface ThreadTree {
   id: number
