@@ -74,6 +74,28 @@
           暂无对话，点击上方按钮开始
         </div>
       </div>
+      
+      <!-- 新增：AI用量信息 -->
+      <div class="usage-info" v-if="aiUsage">
+        <div class="usage-title">用量统计</div>
+        <div class="usage-progress">
+          <div 
+            class="usage-progress-bar" 
+            :style="{ width: `${Math.min(100, (aiUsage.total_tokens / aiUsage.max_daily_tokens) * 100)}%` }"
+            :class="{ 'near-limit': (aiUsage.total_tokens / aiUsage.max_daily_tokens) > 0.8 }"
+          ></div>
+        </div>
+        <div class="usage-details">
+          <span class="usage-text">
+            已用: {{ formatNumber(aiUsage.total_tokens) }} / {{ formatNumber(aiUsage.max_daily_tokens) }} tokens
+          </span>
+          <span class="usage-percentage">
+            {{ Math.round((aiUsage.total_tokens / aiUsage.max_daily_tokens) * 100) }}%
+          </span>
+        </div>
+        <div class="usage-date">重置时间: {{ aiUsage.current_date }}</div>
+      </div>
+      
       <div class="sidebar-footer">
         <div class="user-avatar">U</div>
         <div class="user-info">
@@ -97,8 +119,21 @@
           </div>
         </div>
         <div class="chat-actions">
-          <button class="btn-icon" title="设置">
-            <span class="icon">⚙️</span>
+          <!-- 新增：模型选择器 -->
+          <div class="model-selector" v-if="availableModels.length > 0">
+            <select v-model="currentModel" @change="onModelChange" class="model-select">
+              <option 
+                v-for="model in availableModels" 
+                :key="model" 
+                :value="model"
+                :disabled="model === '模拟模式' && !isMockModeAvailable"
+              >
+                {{ getModelDisplayName(model) }}
+              </option>
+            </select>
+          </div>
+          <button class="btn-icon" title="刷新用量" @click="refreshUsage">
+            <span class="icon">🔄</span>
           </button>
         </div>
       </div>
@@ -113,6 +148,7 @@
             <div class="message-meta">
               <span class="message-role">{{ msg.role === 'user' ? '您' : 'AI助手' }}</span>
               <span class="message-time">{{ formatTime(msg.created_at) }}</span>
+              <span v-if="msg.model_used" class="message-model">({{ getModelDisplayName(msg.model_used) }})</span>
             </div>
             <div class="message-text" v-html="formatMessage(msg.content)"></div>
             <div class="message-actions" v-if="msg.role === 'assistant'">
@@ -127,6 +163,7 @@
                   class="btn-action" 
                   @click="regenerateMessage(msg.id)"
                   title="重新生成"
+                  :disabled="isStreaming"
               >
                   <span class="icon">🔄</span>
               </button>
@@ -134,22 +171,33 @@
               <button 
                  class="btn-action" 
                  @click="createBranchFromMessage(msg.id)"
-                 :disabled="!canCreateBranch(msg)"
+                 :disabled="!canCreateBranch(msg) || isStreaming"
                  :title="getBranchButtonTitle(msg)"
-                 :class="{ 'disabled': !canCreateBranch(msg) }"
+                 :class="{ 'disabled': !canCreateBranch(msg) || isStreaming }"
               >
                 <span class="icon">🌿</span> 分支
               </button>
             </div>
           </div>
         </div>
-        <div v-if="isLoading" class="thinking-indicator">
+        <!-- 修改：流式生成指示器 -->
+        <div v-if="isStreaming" class="streaming-indicator">
+          <div class="streaming-dots">
+            <span></span><span></span><span></span>
+          </div>
+          <div class="streaming-text">{{ streamingModel ? getModelDisplayName(streamingModel) : 'AI' }}正在生成...</div>
+          <button class="btn-stop" @click="stopGenerating" title="停止生成">
+            停止
+          </button>
+        </div>
+        <div v-else-if="isLoading" class="thinking-indicator">
           <div class="thinking-dots">
             <span></span><span></span><span></span>
           </div>
           <div class="thinking-text">AI正在思考...</div>
         </div>
       </div>
+      
       <!-- 深度提示 -->
       <BranchDepthHint 
          v-if="currentThread"
@@ -159,34 +207,64 @@
 
       <!-- 输入区域 -->
       <div class="input-container">
+        <!-- 新增：Token用量警告 -->
+        <div v-if="isTokenLimitReached" class="token-limit-warning">
+          <span class="warning-icon">⚠️</span>
+          <span class="warning-text">当日API用量已达上限，请明日再试</span>
+        </div>
+        
         <div class="input-area-wrapper">
           <textarea
             v-model="userInput"
-            placeholder="发送消息给AI... (Shift+Enter换行，Enter发送)"
+            :placeholder="getInputPlaceholder()"
             @keydown.enter.exact.prevent="sendMessage"
             @keydown.shift.enter.exact="userInput += '\n'"
-            :disabled="isLoading"
+            :disabled="isLoading || isStreaming || isTokenLimitReached"
             rows="1"
             ref="inputTextarea"
             class="message-input"
             @input="autoResizeTextarea"
           ></textarea>
-          <button
-            class="btn-send"
-            @click="sendMessage"
-            :disabled="!userInput.trim() || isLoading"
-            :class="{ disabled: !userInput.trim() || isLoading }"
-            title="发送消息"
-          >
-            <span class="icon" v-if="!isLoading">⬆</span>
-            <span class="icon loading" v-else>⏳</span>
-          </button>
+          <div class="send-controls">
+            <!-- 新增：流式控制开关 -->
+            <div class="streaming-toggle" title="流式响应">
+              <input
+                type="checkbox"
+                id="streaming-toggle"
+                v-model="streamingEnabled"
+                :disabled="isLoading || isStreaming"
+                class="toggle-checkbox"
+              />
+              <label for="streaming-toggle" class="toggle-label">
+                <span class="toggle-text">流式</span>
+              </label>
+            </div>
+            <button
+              class="btn-send"
+              @click="sendMessage"
+              :disabled="!canSendMessage"
+              :class="{ 
+                disabled: !canSendMessage,
+                streaming: isStreaming
+              }"
+              :title="getSendButtonTitle()"
+            >
+              <span v-if="isStreaming" class="icon stop-icon" title="停止生成">⏹️</span>
+              <span v-else class="icon send-icon">⬆</span>
+            </button>
+          </div>
         </div>
         <div class="input-footer">
-          <div class="model-info">当前模型: <strong>DeepSeek</strong></div>
+          <div class="model-info">
+            当前模型: <strong>{{ getModelDisplayName(currentModel) }}</strong>
+            <span v-if="streamingEnabled" class="streaming-badge">流式</span>
+            <span v-else class="streaming-badge off">非流式</span>
+          </div>
           <div class="input-hints">
             <span class="hint">对话ID: {{ currentConversation?.id || '--' }}</span>
             <span class="hint">线程ID: {{ currentThread?.id || '--' }}</span>
+            <span v-if="isTokenLimitReached" class="hint warning">用量已达上限</span>
+            <span v-else-if="aiUsage" class="hint">剩余: {{ formatNumber(aiUsage.remaining_tokens) }} tokens</span>
           </div>
         </div>
       </div>
@@ -196,7 +274,7 @@
     <aside class="sidebar right-sidebar">
       <div class="sidebar-header">
         <h3>分支树</h3>
-        <button class="btn-icon" @click="refreshThreadTree" title="刷新">
+        <button class="btn-icon" @click="refreshThreadTree" title="刷新" :disabled="isStreaming">
           <span class="icon">🔄</span>
         </button>
       </div>
@@ -217,13 +295,12 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, nextTick, watch } from 'vue'
+import { ref, onMounted, nextTick, watch, computed } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useChatStore } from '@/stores/chat'
 import ThreadTreeNode from '@/components/ThreadTreeNode.vue'
-import type { Conversation } from '@/types/chat'
+import type { Conversation, Message } from '@/types/chat'
 import BranchDepthHint from '@/components/BranchDepthHint.vue'
-import type { Message } from '@/types/chat'
 
 // ---------- 状态与Store ----------
 const chatStore = useChatStore()
@@ -234,18 +311,33 @@ const {
   messages,
   isLoading,
   threadTree,
-  threadPath
+  threadPath,
+  isStreaming,
+  streamingModel,
+  aiUsage,
+  availableModels,
+  currentModel,
+  isTokenLimitReached
 } = storeToRefs(chatStore)
 
 // ---------- 本地响应式数据 ----------
 const userInput = ref('')
 const messagesContainer = ref<HTMLElement>()
 const inputTextarea = ref<HTMLTextAreaElement>()
+const streamingEnabled = ref(true) // 默认启用流式
+
+// ---------- 计算属性 ----------
+const canSendMessage = computed(() => {
+  return userInput.value.trim() && !isLoading.value && !isTokenLimitReached.value
+})
+
+const isMockModeAvailable = computed(() => {
+  return availableModels.value.includes('模拟模式')
+})
 
 // ---------- 方法 ----------
 const createNewConversation = async () => {
   await chatStore.createConversation('新对话')
-  // 创建后会自动设为当前对话，并清空消息列表
   userInput.value = ''
   scrollToBottom()
 }
@@ -257,21 +349,94 @@ const switchConversation = async (convId: number) => {
 
 const sendMessage = async () => {
   const text = userInput.value.trim()
-  if (!text || isLoading.value) return
+  if (!text || isLoading.value || isTokenLimitReached.value) return
 
-  await chatStore.sendMessage(text)
-  userInput.value = ''
-  // 等待DOM更新后滚动到底部
-  nextTick(() => {
-    scrollToBottom()
-  })
-  // 保持输入框焦点
-  inputTextarea.value?.focus()
+  try {
+    if (streamingEnabled.value) {
+      // 使用流式发送
+      await chatStore.sendMessageStream(text)
+    } else {
+      // 使用非流式发送
+      await chatStore.sendMessage(text)
+    }
+    
+    userInput.value = ''
+    // 等待DOM更新后滚动到底部
+    nextTick(() => {
+      scrollToBottom()
+    })
+  } catch (error) {
+    console.error('发送消息失败:', error)
+    // 错误信息已在store中处理
+  } finally {
+    // 保持输入框焦点
+    inputTextarea.value?.focus()
+  }
+}
+
+// 停止生成
+const stopGenerating = async () => {
+  await chatStore.stopStreaming()
+}
+
+// 刷新用量信息
+const refreshUsage = async () => {
+  await chatStore.fetchAIUsage()
+  showToast('用量信息已刷新', 'success')
+}
+
+// 模型变更处理
+const onModelChange = () => {
+  chatStore.setCurrentModel(currentModel.value)
+  showToast(`已切换到模型: ${getModelDisplayName(currentModel.value)}`, 'success')
+}
+
+// 获取模型显示名称
+// 在ChatView.vue的script部分，添加计算属性
+const getModelDisplayName = (model: string) => {
+  return chatStore.getModelDisplayName(model)
+}
+
+// 获取输入框提示文本
+const getInputPlaceholder = (): string => {
+  if (isTokenLimitReached.value) {
+    return '当日API用量已达上限，请明日再试'
+  }
+  if (isStreaming.value) {
+    return 'AI正在生成，请稍后...'
+  }
+  return '发送消息给AI... (Shift+Enter换行，Enter发送)'
+}
+
+// 获取发送按钮提示
+const getSendButtonTitle = (): string => {
+  if (isTokenLimitReached.value) {
+    return '用量已达上限'
+  }
+  if (isStreaming.value) {
+    return '停止生成'
+  }
+  if (!userInput.value.trim()) {
+    return '请输入消息'
+  }
+  if (streamingEnabled.value) {
+    return '发送消息（流式）'
+  }
+  return '发送消息'
+}
+
+// 数字格式化
+const formatNumber = (num: number): string => {
+  if (num >= 1000000) {
+    return (num / 1000000).toFixed(1) + 'M'
+  }
+  if (num >= 1000) {
+    return (num / 1000).toFixed(1) + 'K'
+  }
+  return num.toString()
 }
 
 // ---------- 分支相关方法 ----------
-
-// 安全获取最新消息的辅助函数
 const getLatestMessage = (): Message | null => {
   if (messages.value.length === 0) return null
   const latest = messages.value[messages.value.length - 1]
@@ -279,26 +444,27 @@ const getLatestMessage = (): Message | null => {
 }
 
 const createBranchFromMessage = async (messageId: number) => {
-  // 检查1: 当前线程是否存在深度信息
+  if (isStreaming.value) {
+    showToast('请等待当前生成完成', 'error')
+    return
+  }
+  
   if (currentThread.value?.depth !== undefined && currentThread.value.depth >= 3) {
     showToast('分支深度已达上限（3层），无法创建更深层的分支', 'error')
     return
   }
   
-  // 安全获取最新消息
   const latestMessage = getLatestMessage()
   if (!latestMessage) {
     showToast('当前没有消息，无法创建分支', 'error')
     return
   }
   
-  // 检查2: 是否是最新消息
   if (messageId !== latestMessage.id) {
     showToast('只能在最新消息处创建分支', 'error')
     return
   }
   
-  // 检查3: 只能是AI消息
   if (latestMessage.role !== 'assistant') {
     showToast('只能在AI回复处创建分支', 'error')
     return
@@ -313,58 +479,57 @@ const createBranchFromMessage = async (messageId: number) => {
       })
     }
   } catch (error: unknown) {
-    // 错误信息已由store处理
     console.error('创建分支失败:', error)
   }
 }
 
-// 检查是否可以在此消息创建分支
 const canCreateBranch = (msg: Message) => {
-  // 必须是AI消息
+  if (isStreaming.value) return false
   if (msg.role !== 'assistant') return false
-  
-  // 当前线程深度不能超过3
   if (currentThread.value?.depth !== undefined && currentThread.value.depth >= 3) {
     return false
   }
-  
   const latestMessage = getLatestMessage()
   if (!latestMessage) return false
-  
   return msg.id === latestMessage.id
 }
 
-// 获取分支按钮的提示文本
 const getBranchButtonTitle = (msg: Message) => {
+  if (isStreaming.value) {
+    return '请等待生成完成'
+  }
   if (msg.role !== 'assistant') {
     return '只能在AI回复处创建分支'
   }
-  
   if (currentThread.value?.depth !== undefined && currentThread.value.depth >= 3) {
     return '分支深度已达上限（3层）'
   }
-  
   const latestMessage = getLatestMessage()
   if (!latestMessage) {
     return '当前没有消息'
   }
-  
   if (msg.id !== latestMessage.id) {
     return '只能在最新消息处创建分支'
   }
-  
   return '从此回复创建新分支'
 }
 
 const switchThread = async (threadId: number) => {
+  if (isStreaming.value) {
+    showToast('请等待生成完成后再切换', 'error')
+    return
+  }
   await chatStore.switchThread(threadId)
   scrollToBottom()
 }
 
 const refreshThreadTree = () => {
+  if (isStreaming.value) {
+    showToast('请等待生成完成后再刷新', 'error')
+    return
+  }
   chatStore.fetchThreadTree()
 }
-
 
 // ---------- 消息操作方法 ----------
 const copyMessage = async (content: string) => {
@@ -373,7 +538,6 @@ const copyMessage = async (content: string) => {
     showToast('消息已复制到剪贴板')
   } catch (err) {
     console.error('复制失败:', err)
-    // 降级方案
     const textArea = document.createElement('textarea')
     textArea.value = content
     document.body.appendChild(textArea)
@@ -385,14 +549,13 @@ const copyMessage = async (content: string) => {
 }
 
 const regenerateMessage = (messageId: number) => {
-  // 重新生成消息的逻辑
-  // 这需要后端支持重新生成特定消息的功能
-  // 目前先留空，稍后实现
+  if (isStreaming.value) {
+    showToast('请等待当前生成完成', 'error')
+    return
+  }
   console.log('重新生成消息:', messageId)
   alert('重新生成功能待实现')
 }
-
-
 
 // ---------- 工具函数 ----------
 const formatTime = (timestamp: string | Date | undefined): string => {
@@ -402,7 +565,6 @@ const formatTime = (timestamp: string | Date | undefined): string => {
 }
 
 const formatMessage = (content: string): string => {
-  // 简单处理：将换行转换为<br>，实际应使用安全的Markdown渲染库
   return content.replace(/\n/g, '<br>')
 }
 
@@ -416,7 +578,9 @@ const autoResizeTextarea = () => {
 
 const scrollToBottom = () => {
   if (messagesContainer.value) {
-    messagesContainer.value.scrollTop = messagesContainer.value.scrollHeight
+    nextTick(() => {
+      messagesContainer.value!.scrollTop = messagesContainer.value!.scrollHeight
+    })
   }
 }
 
@@ -425,6 +589,9 @@ onMounted(async () => {
   console.log('ChatView 组件挂载')
   
   try {
+    // 初始化store
+    await chatStore.initialize()
+    
     // 1. 先获取对话列表
     await chatStore.fetchConversations()
     console.log('对话列表加载完成:', chatStore.conversations.length)
@@ -454,6 +621,16 @@ watch(messages, () => {
   })
 }, { deep: true })
 
+// 当流式状态变化时，可能需要调整UI
+watch(isStreaming, (newVal) => {
+  if (!newVal) {
+    // 流式生成结束，重置输入框状态
+    nextTick(() => {
+      inputTextarea.value?.focus()
+    })
+  }
+})
+
 // ---------- 对话标题编辑相关状态 ----------
 const editingConversation = ref<Conversation | null>(null)
 const editingTitle = ref('')
@@ -461,9 +638,12 @@ const titleInput = ref<HTMLInputElement>()
 
 // ---------- 对话标题编辑方法 ----------
 const startEditConversationTitle = (conversation: Conversation) => {
+  if (isStreaming.value) {
+    showToast('请等待生成完成后再编辑标题', 'error')
+    return
+  }
   editingConversation.value = conversation
   editingTitle.value = conversation.title
-  // 下一个tick聚焦输入框
   nextTick(() => {
     titleInput.value?.focus()
     titleInput.value?.select()
@@ -508,6 +688,10 @@ const showToast = (message: string, type: 'success' | 'error' = 'success') => {
 
 // ---------- 删除对话方法 ----------
 const confirmDeleteConversation = (convId: number, convTitle: string) => {
+  if (isStreaming.value) {
+    showToast('请等待生成完成后再删除对话', 'error')
+    return
+  }
   deletingConversationId.value = convId
   deletingConversationTitle.value = convTitle
   showDeleteConfirm.value = true
@@ -523,7 +707,6 @@ const confirmDelete = async () => {
   if (deletingConversationId.value !== null) {
     try {
       await chatStore.deleteConversation(deletingConversationId.value)
-      // 删除后重置删除状态
       cancelDelete()
       showToast('对话删除成功')
     } catch (error) {
@@ -532,10 +715,8 @@ const confirmDelete = async () => {
     }
   }
 }
-
-
-
 </script>
+
 
 <style scoped>
 .chat-container {

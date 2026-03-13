@@ -1,7 +1,12 @@
 import os
 import logging
-from typing import Dict, Any, Optional
-from openai import OpenAI
+import asyncio
+import json
+import threading
+from typing import Dict, Any, Optional, List, AsyncGenerator
+from datetime import datetime, date
+from pathlib import Path
+from openai import OpenAI, AsyncOpenAI
 from dotenv import load_dotenv
 
 # 加载环境变量
@@ -9,82 +14,312 @@ load_dotenv()
 
 logger = logging.getLogger(__name__)
 
+
+class TokenUsageTracker:
+    """Token用量跟踪器，使用文件存储保证重启后数据不丢失"""
+    
+    def __init__(self, data_file: str = "token_usage.json"):
+        self.data_file = Path(data_file)
+        self._lock = threading.Lock()
+        self._usage_data: Optional[Dict] = None
+        
+        # 初始化数据文件
+        self._init_data_file()
+    
+    def _init_data_file(self):
+        """初始化数据文件"""
+        with self._lock:
+            if not self.data_file.exists():
+                initial_data = {
+                    "current_date": date.today().isoformat(),
+                    "total_tokens": 0,
+                    "last_reset": date.today().isoformat()
+                }
+                self._write_data(initial_data)
+                logger.info(f"已创建用量数据文件: {self.data_file}")
+    
+    def _read_data(self) -> Dict:
+        """读取用量数据"""
+        try:
+            with open(self.data_file, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except (json.JSONDecodeError, FileNotFoundError) as e:
+            logger.warning(f"读取用量数据失败，重置数据: {e}")
+            return {
+                "current_date": date.today().isoformat(),
+                "total_tokens": 0,
+                "last_reset": date.today().isoformat()
+            }
+    
+    def _write_data(self, data: Dict):
+        """写入用量数据"""
+        try:
+            with open(self.data_file, 'w', encoding='utf-8') as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+        except Exception as e:
+            logger.error(f"写入用量数据失败: {e}")
+    
+    def _check_and_reset_if_needed(self, data: Dict) -> Dict:
+        """检查并重置过期数据"""
+        today = date.today()
+        last_reset = datetime.strptime(data["last_reset"], "%Y-%m-%d").date()
+        
+        # 如果日期变化，重置用量
+        if last_reset < today:
+            data["current_date"] = today.isoformat()
+            data["total_tokens"] = 0
+            data["last_reset"] = today.isoformat()
+            logger.info(f"Token用量已重置，新日期: {today}")
+        
+        return data
+    
+    def can_make_request(self, tokens_needed: int) -> bool:
+        """检查是否可以发起请求（未超过每日上限）"""
+        with self._lock:
+            data = self._read_data()
+            data = self._check_and_reset_if_needed(data)
+            
+            max_daily = int(os.getenv("MAX_DAILY_TOKENS", 1000000))
+            current_usage = data.get("total_tokens", 0)
+            
+            # 检查是否超出限制
+            if current_usage + tokens_needed > max_daily:
+                logger.warning(
+                    f"Token用量已达上限: 当前{current_usage}, 需要{tokens_needed}, 上限{max_daily}"
+                )
+                return False
+            
+            return True
+    
+    def add_usage(self, tokens_used: int) -> int:
+        """添加Token使用量"""
+        with self._lock:
+            data = self._read_data()
+            data = self._check_and_reset_if_needed(data)
+            
+            # 更新使用量
+            data["total_tokens"] = data.get("total_tokens", 0) + tokens_used
+            self._write_data(data)
+            
+            logger.info(f"更新Token用量: +{tokens_used} = {data['total_tokens']}")
+            return data["total_tokens"]
+    
+    def get_current_usage(self) -> Dict:
+        """获取当前用量信息"""
+        with self._lock:
+            data = self._read_data()
+            data = self._check_and_reset_if_needed(data)
+            
+            return {
+                "current_date": data["current_date"],
+                "total_tokens": data.get("total_tokens", 0),
+                "max_daily_tokens": int(os.getenv("MAX_DAILY_TOKENS", 1000000)),
+                "remaining_tokens": max(0, int(os.getenv("MAX_DAILY_TOKENS", 1000000)) - data.get("total_tokens", 0))
+            }
+
+
+class RequestManager:
+    """请求管理器，用于处理用户请求中断"""
+    
+    def __init__(self):
+        self._user_requests: Dict[str, bool] = {}  # user_id -> should_stop flag
+        self._lock = threading.Lock()
+    
+    def register_request(self, user_id: str):
+        """注册用户请求"""
+        with self._lock:
+            self._user_requests[user_id] = False
+    
+    def stop_request(self, user_id: str):
+        """停止用户请求"""
+        with self._lock:
+            if user_id in self._user_requests:
+                self._user_requests[user_id] = True
+                logger.info(f"已标记停止用户 {user_id} 的请求")
+    
+    def should_stop(self, user_id: str) -> bool:
+        """检查是否应该停止"""
+        with self._lock:
+            return self._user_requests.get(user_id, False)
+    
+    def clear_request(self, user_id: str):
+        """清除用户请求状态"""
+        with self._lock:
+            if user_id in self._user_requests:
+                del self._user_requests[user_id]
+
+
+# 全局用量跟踪器和请求管理器实例
+token_tracker = TokenUsageTracker()
+request_manager = RequestManager()
+
+
 class AIService:
     def __init__(self):
         """初始化AI服务，支持多种模型"""
         self.model_providers = {}
+        self.streaming_enabled = os.getenv("STREAMING_ENABLED", "true").lower() == "true"
         self._setup_providers()
         
+    def _estimate_tokens(self, messages: List[Dict]) -> int:
+        """粗略估计消息的Token数"""
+        total_tokens = 0
+        for msg in messages:
+            content = msg.get("content", "")
+            # 计算中文字符和英文字符
+            chinese_chars = sum(1 for c in content if '\u4e00' <= c <= '\u9fff')
+            english_chars = len(content) - chinese_chars
+            
+            # 粗略估算
+            tokens = chinese_chars * 2 + english_chars * 0.25
+            total_tokens += int(tokens) + 5  # 加上角色信息的额外开销
+        
+        # 加上预计回复的token
+        if messages:
+            last_msg = messages[-1].get("content", "")
+            chinese_chars = sum(1 for c in last_msg if '\u4e00' <= c <= '\u9fff')
+            english_chars = len(last_msg) - chinese_chars
+            reply_tokens = chinese_chars * 2 + english_chars * 0.25
+            total_tokens += int(reply_tokens)
+        
+        return max(50, total_tokens)  # 最少50个token
+    
+    def _check_token_limit(self, messages: List[Dict]) -> bool:
+        """检查Token用量是否超限"""
+        estimated_tokens = self._estimate_tokens(messages)
+        return token_tracker.can_make_request(estimated_tokens)
+    
     def _setup_providers(self):
         """配置可用的AI模型提供商"""
-        # DeepSeek配置
+        # 硅基流动平台DeepSeek-V3配置
         deepseek_api_key = os.getenv("DEEPSEEK_API_KEY")
-        if deepseek_api_key:
-            self.model_providers["deepseek-chat"] = {
-                "client": OpenAI(
-                    api_key=deepseek_api_key,
-                    base_url="https://api.deepseek.com"
-                ),
-                "model": "deepseek-chat"
-            }
+        base_url = os.getenv("OPENAI_API_BASE", "https://api.siliconflow.cn/v1")
+        model_name = os.getenv("DEFAULT_MODEL", "deepseek-ai/DeepSeek-V3")
         
-        # OpenAI配置
-        openai_api_key = os.getenv("OPENAI_API_KEY")
-        if openai_api_key:
-            self.model_providers["gpt-4"] = {
-                "client": OpenAI(api_key=openai_api_key),
-                "model": "gpt-4"
-            }
-            self.model_providers["gpt-3.5-turbo"] = {
-                "client": OpenAI(api_key=openai_api_key),
-                "model": "gpt-3.5-turbo"
-            }
+        if deepseek_api_key:
+            try:
+                # 同步客户端（用于非流式调用）
+                sync_client = OpenAI(
+                    api_key=deepseek_api_key,
+                    base_url=base_url
+                )
+                # 异步客户端（用于流式调用）
+                async_client = AsyncOpenAI(
+                    api_key=deepseek_api_key,
+                    base_url=base_url
+                )
+                
+                self.model_providers[model_name] = {
+                    "sync_client": sync_client,
+                    "async_client": async_client,
+                    "model": model_name,
+                    "is_real": True
+                }
+                logger.info(f"已配置硅基流动平台模型: {model_name}")
+            except Exception as e:
+                logger.error(f"初始化硅基流动客户端失败: {e}")
         
         # 如果没有配置任何API密钥，使用模拟模式
         if not self.model_providers:
             logger.warning("没有配置任何AI API密钥，将使用模拟模式")
-            self.model_providers["mock"] = {"client": None, "model": "mock"}
+            self.model_providers["mock"] = {
+                "sync_client": None, 
+                "async_client": None, 
+                "model": "mock",
+                "is_real": False
+            }
     
     def get_available_models(self) -> list:
         """获取可用的模型列表"""
         return list(self.model_providers.keys())
     
-    def chat_completion(
+    def get_default_model(self) -> str:
+        """获取默认模型"""
+        models = self.get_available_models()
+        if not models:
+            return "mock"
+        
+        # 优先返回真实模型
+        for model in models:
+            if model != "mock":
+                return model
+        
+        return models[0]
+    
+    async def chat_completion(
         self, 
         messages: list, 
-        model: str = "deepseek-chat",
+        model: Optional[str] = None,
         temperature: float = 0.7,
-        max_tokens: int = 2000
+        max_tokens: int = 2000,
+        stream: bool = False,
+        user_id: str = None
     ) -> Dict[str, Any]:
         """
-        调用AI模型进行对话补全
+        调用AI模型进行对话补全（异步版本）
         
         Args:
             messages: 对话消息列表
-            model: 模型名称
+            model: 模型名称，为None时使用默认模型
             temperature: 温度参数
             max_tokens: 最大token数
+            stream: 是否使用流式响应
+            user_id: 用户ID，用于请求中断
             
         Returns:
             Dict包含content, model_used, tokens等信息
         """
+        if model is None:
+            model = self.get_default_model()
+        
+        # 检查模型是否可用
+        if model not in self.model_providers:
+            available_models = self.get_available_models()
+            if "mock" in available_models:
+                model = "mock"
+            else:
+                raise ValueError(f"模型 '{model}' 不可用。可用模型: {available_models}")
+        
+        provider = self.model_providers[model]
+        
+        # 检查用量限制
+        if not self._check_token_limit(messages):
+            raise ValueError("当日API用量已达上限，请明日再试")
+        
+        # 注册用户请求（用于中断机制）
+        if user_id:
+            request_manager.register_request(user_id)
+        
         try:
-            # 检查模型是否可用
-            if model not in self.model_providers:
-                available_models = self.get_available_models()
-                if "mock" in available_models:
-                    model = "mock"
+            # 模拟模式
+            if model == "mock" or not provider["is_real"]:
+                if stream:
+                    # 流式模拟响应
+                    return await self._mock_stream_completion(messages, user_id)
                 else:
-                    raise ValueError(f"模型 '{model}' 不可用。可用模型: {available_models}")
-            
-            provider = self.model_providers[model]
-            
-            # 模拟模式（用于测试）
-            if model == "mock":
-                return self._mock_chat_completion(messages)
+                    return await self._mock_chat_completion(messages)
             
             # 真实API调用
-            client = provider["client"]
+            if stream:
+                # 流式响应通过生成器处理
+                raise NotImplementedError("流式响应应通过stream_chat_completion方法调用")
+            else:
+                return await self._real_chat_completion(messages, provider, temperature, max_tokens)
+        finally:
+            # 清理请求状态
+            if user_id:
+                request_manager.clear_request(user_id)
+    
+    async def _real_chat_completion(
+        self, 
+        messages: list, 
+        provider: Dict,
+        temperature: float,
+        max_tokens: int
+    ) -> Dict[str, Any]:
+        """真实API调用（非流式）"""
+        try:
+            client = provider["sync_client"]
             model_name = provider["model"]
             
             response = client.chat.completions.create(
@@ -97,19 +332,132 @@ class AIService:
             
             # 提取响应
             ai_response = response.choices[0].message.content
-            tokens_used = response.usage.total_tokens if response.usage else None
+            tokens_used = response.usage.total_tokens if response.usage else 0
+            
+            # 记录用量
+            if tokens_used > 0:
+                token_tracker.add_usage(tokens_used)
+            else:
+                # 如果没有返回usage，估算
+                estimated_tokens = self._estimate_tokens(messages + [{"role": "assistant", "content": ai_response}])
+                token_tracker.add_usage(estimated_tokens)
+                tokens_used = estimated_tokens
             
             return {
                 "content": ai_response,
                 "model_used": model_name,
-                "tokens": tokens_used
+                "tokens": tokens_used,
+                "is_streaming": False
             }
             
         except Exception as e:
             logger.error(f"AI服务调用失败: {str(e)}")
-            raise
+            # API调用失败时回退到模拟模式
+            logger.info("回退到模拟模式")
+            return await self._mock_chat_completion(messages)
     
-    def _mock_chat_completion(self, messages: list) -> Dict[str, Any]:
+    async def stream_chat_completion(
+        self,
+        messages: list,
+        model: Optional[str] = None,
+        temperature: float = 0.7,
+        max_tokens: int = 2000,
+        user_id: str = None
+    ) -> AsyncGenerator[str, None]:
+        """
+        流式响应生成器
+        
+        Args:
+            messages: 对话消息列表
+            model: 模型名称
+            temperature: 温度参数
+            max_tokens: 最大token数
+            user_id: 用户ID
+            
+        Yields:
+            SSE格式的数据块
+        """
+        if model is None:
+            model = self.get_default_model()
+        
+        # 检查模型是否可用
+        if model not in self.model_providers:
+            available_models = self.get_available_models()
+            if "mock" in available_models:
+                model = "mock"
+            else:
+                # 返回错误信息
+                error_msg = f"模型 '{model}' 不可用。可用模型: {available_models}"
+                yield f"data: {json.dumps({'content': error_msg, 'error': True, 'done': True}, ensure_ascii=False)}\n\n"
+                return
+        
+        provider = self.model_providers[model]
+        
+        # 检查用量限制
+        if not self._check_token_limit(messages):
+            error_msg = "当日API用量已达上限，请明日再试"
+            yield f"data: {json.dumps({'content': error_msg, 'error': True, 'done': True}, ensure_ascii=False)}\n\n"
+            return
+        
+        # 注册用户请求
+        if user_id:
+            request_manager.register_request(user_id)
+        
+        try:
+            # 模拟模式
+            if model == "mock" or not provider["is_real"]:
+                async for chunk in self._mock_stream_completion_generator(messages, user_id):
+                    yield chunk
+                return
+            
+            # 真实API流式调用
+            async_client = provider["async_client"]
+            model_name = provider["model"]
+            
+            stream = await async_client.chat.completions.create(
+                model=model_name,
+                messages=messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                stream=True
+            )
+            
+            full_content = ""
+            
+            async for chunk in stream:
+                # 检查是否应该停止
+                if user_id and request_manager.should_stop(user_id):
+                    logger.info(f"用户 {user_id} 请求停止生成")
+                    break
+                
+                if chunk.choices[0].delta.content is not None:
+                    content_chunk = chunk.choices[0].delta.content
+                    full_content += content_chunk
+                    
+                    # 返回SSE格式的数据
+                    yield f"data: {json.dumps({'content': content_chunk, 'done': False}, ensure_ascii=False)}\n\n"
+            
+            # 流式响应结束
+            yield f"data: {json.dumps({'content': '', 'done': True}, ensure_ascii=False)}\n\n"
+            
+            # 估算token使用量
+            estimated_tokens = self._estimate_tokens(messages + [{"role": "assistant", "content": full_content}])
+            token_tracker.add_usage(estimated_tokens)
+            
+        except Exception as e:
+            logger.error(f"AI流式服务调用失败: {str(e)}")
+            # API调用失败时，回退到模拟模式
+            error_msg = f"API调用失败: {str(e)}，已切换至模拟模式"
+            yield f"data: {json.dumps({'content': error_msg, 'error': True, 'done': False}, ensure_ascii=False)}\n\n"
+            
+            async for chunk in self._mock_stream_completion_generator(messages, user_id, is_fallback=True):
+                yield chunk
+        finally:
+            # 清理请求状态
+            if user_id:
+                request_manager.clear_request(user_id)
+    
+    async def _mock_chat_completion(self, messages: list) -> Dict[str, Any]:
         """模拟AI响应（用于测试）"""
         last_message = messages[-1]["content"] if messages else "你好"
         
@@ -126,8 +474,54 @@ class AIService:
         return {
             "content": content,
             "model_used": "mock",
-            "tokens": len(content) // 4  # 粗略估算
+            "tokens": len(content) // 4,  # 粗略估算
+            "is_streaming": False
         }
+    
+    async def _mock_stream_completion(self, messages: list, user_id: str = None) -> Dict[str, Any]:
+        """模拟流式响应（返回完整结果）"""
+        result = await self._mock_chat_completion(messages)
+        result["is_streaming"] = True
+        return result
+    
+    async def _mock_stream_completion_generator(
+        self, 
+        messages: list, 
+        user_id: str = None,
+        is_fallback: bool = False
+    ) -> AsyncGenerator[str, None]:
+        """模拟模式下的流式响应生成器"""
+        last_message = messages[-1]["content"] if messages else "你好"
+        
+        if is_fallback:
+            responses = ["抱歉，真实API调用失败。", "已切换至模拟模式。", "这是模拟回复..."]
+        elif "你好" in last_message or "hello" in last_message.lower():
+            responses = ["你好！", "我是AI助手，", "很高兴为您服务。"]
+        elif "python" in last_message.lower():
+            responses = ["Python是一种", "高级编程语言，", "以简洁易读的语法而闻名。"]
+        elif "java" in last_message.lower():
+            responses = ["Java是一种", "面向对象的编程语言，", "具有'一次编写，到处运行'的特点。"]
+        else:
+            responses = [
+                f"我收到了: '{last_message[:30]}...'。",
+                "这是在模拟模式下的回复。",
+                "要获取真实AI回复，请配置API密钥。"
+            ]
+        
+        for i, chunk in enumerate(responses):
+            # 检查是否应该停止
+            if user_id and request_manager.should_stop(user_id):
+                break
+            
+            # 模拟逐词输出效果
+            words = chunk.split()
+            for word in words:
+                await asyncio.sleep(0.05)  # 模拟延迟
+                yield f"data: {json.dumps({'content': word + ' ', 'done': False}, ensure_ascii=False)}\n\n"
+            
+            # 如果是最后一块，发送完成信号
+            if i == len(responses) - 1:
+                yield f"data: {json.dumps({'content': '', 'done': True}, ensure_ascii=False)}\n\n"
     
     def count_tokens(self, text: str, model: str = "deepseek-chat") -> int:
         """
@@ -203,6 +597,20 @@ class AIService:
             return f"细节{thread_count}"
         else:
             return f"方案{thread_count}"
+    
+    def get_usage_info(self) -> Dict[str, Any]:
+        """获取用量信息"""
+        usage = token_tracker.get_current_usage()
+        usage.update({
+            "available_models": self.get_available_models(),
+            "default_model": self.get_default_model(),
+            "streaming_enabled": self.streaming_enabled
+        })
+        return usage
+    
+    def stop_user_request(self, user_id: str):
+        """停止用户的当前请求"""
+        request_manager.stop_request(user_id)
 
 
 # 创建全局AI服务实例

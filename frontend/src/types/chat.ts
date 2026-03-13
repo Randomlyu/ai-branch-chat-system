@@ -77,3 +77,35 @@ export interface ApiResponse<T = unknown> {
   code: number
   message: string
 }
+
+// 流式响应数据
+export interface StreamResponseData {
+  content: string
+  done: boolean
+  error?: boolean
+}
+
+// AI用量信息
+export interface AIUsageInfo {
+  current_date: string
+  total_tokens: number
+  max_daily_tokens: number
+  remaining_tokens: number
+  available_models: string[]
+  default_model: string
+  streaming_enabled: boolean
+}
+
+// 模型列表响应
+export interface ModelsResponse {
+  models: string[]
+  default_model: string
+}
+
+// 流式请求配置
+export interface StreamRequestConfig {
+  onMessage: (data: StreamResponseData) => void
+  onError?: (error: Error) => void
+  onComplete?: () => void
+  signal?: AbortSignal
+}

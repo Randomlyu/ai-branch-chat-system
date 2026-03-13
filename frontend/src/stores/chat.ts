@@ -1,6 +1,17 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import type { Conversation, Thread, Message, ThreadTree, ApiResponse, ThreadUpdate } from '@/types/chat'
+import type { 
+  Conversation, 
+  Thread, 
+  Message, 
+  ThreadTree, 
+  ApiResponse, 
+  ThreadUpdate,
+  StreamRequestConfig,
+  StreamResponseData,
+  AIUsageInfo,
+  ModelsResponse
+} from '@/types/chat'
 import * as chatApi from '@/api/chat'
 
 export const useChatStore = defineStore('chat', () => {
@@ -12,6 +23,14 @@ export const useChatStore = defineStore('chat', () => {
   const isLoading = ref(false)
   const threadTree = ref<ThreadTree[]>([])
   const error = ref<string | null>(null)
+  
+  // 新增：流式响应相关状态
+  const isStreaming = ref(false)
+  const streamingController = ref<AbortController | null>(null)
+  const streamingModel = ref<string>('')
+  const aiUsage = ref<AIUsageInfo | null>(null)
+  const availableModels = ref<string[]>([])
+  const currentModel = ref<string>('')
 
   // ---------- 计算属性 ----------
   const threadPath = computed(() => {
@@ -34,6 +53,12 @@ export const useChatStore = defineStore('chat', () => {
     return findPath(threadTree.value, currentThread.value.id) || []
   })
 
+  // 新增：计算是否达到Token上限
+  const isTokenLimitReached = computed(() => {
+    if (!aiUsage.value) return false
+    return aiUsage.value.remaining_tokens <= 0
+  })
+
   // ---------- 动作 ----------
   // 获取对话列表
   const fetchConversations = async (): Promise<void> => {
@@ -47,7 +72,6 @@ export const useChatStore = defineStore('chat', () => {
       error.value = err instanceof Error ? err.message : '获取对话列表失败'
     } finally {
       isLoading.value = false
-      console.log('finally 块：设置 isLoading = false')
     }
   }
 
@@ -218,7 +242,209 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
-  // 发送消息
+  // 新增：获取AI用量信息
+  const fetchAIUsage = async (): Promise<void> => {
+    try {
+      const response = await chatApi.getAIUsage()
+      // 使用类型断言，因为我们知道API返回的数据结构
+      aiUsage.value = response.data as AIUsageInfo
+    } catch (err: unknown) {
+      console.error('获取AI用量失败:', err)
+      // 不抛出错误，因为用量信息不是关键功能
+    }
+  }
+
+  // 新增：获取可用模型
+  const fetchAvailableModels = async (): Promise<void> => {
+  try {
+    const response = await chatApi.getAvailableModels()
+    // 使用类型断言
+    const modelsData = response.data as { models: string[], default_model: string }
+    
+    // 确保包含模拟模式
+    const allModels = [...modelsData.models]
+    if (!allModels.includes('mock') && !allModels.includes('模拟模式')) {
+      allModels.push('模拟模式')
+    }
+    
+    availableModels.value = allModels
+    currentModel.value = modelsData.default_model ?? (allModels.length > 0 ? allModels[0] : '模拟模式')
+  } catch (err: unknown) {
+    console.error('获取模型列表失败:', err)
+    // 设置默认值，确保包含模拟模式
+    availableModels.value = ['模拟模式']
+    currentModel.value = '模拟模式'
+  }
+}
+
+  // 新增：设置当前模型
+  const setCurrentModel = (model: string): void => {
+    currentModel.value = model
+  }
+
+  // 发送消息（流式版本）
+const sendMessageStream = async (content: string): Promise<void> => {
+  if (!currentConversation.value || !currentThread.value) {
+    console.error('没有活跃的对话或线程')
+    return
+  }
+  
+  // 检查是否达到Token上限
+  if (isTokenLimitReached.value) {
+    error.value = '当日API用量已达上限，请明日再试'
+    throw new Error('Token limit reached')
+  }
+  
+  // 在外部定义变量，以便catch块中可以访问
+  let userMessage: Message | null = null
+  let aiMessageId: number | null = null
+  
+  try {
+    // 停止之前的流式请求
+    if (isStreaming.value && streamingController.value) {
+      streamingController.value.abort()
+    }
+    
+    // 创建新的AbortController
+    const controller = new AbortController()
+    streamingController.value = controller
+    isStreaming.value = true
+    streamingModel.value = currentModel.value
+    
+    // 添加用户消息到本地
+    const parentMsg = messages.value.length > 0 ? messages.value[messages.value.length - 1] : undefined
+    userMessage = {
+      id: Date.now(), // 临时ID
+      thread_id: currentThread.value.id,
+      role: 'user',
+      content,
+      created_at: new Date().toISOString(),
+      parent_id: parentMsg?.id
+    }
+    messages.value.push(userMessage)
+    
+    // 为AI消息创建占位符
+    aiMessageId = Date.now() + 1
+    const aiMessagePlaceholder: Message = {
+      id: aiMessageId,
+      thread_id: currentThread.value.id,
+      role: 'assistant',
+      content: '', // 初始为空
+      created_at: new Date().toISOString(),
+      parent_id: userMessage.id,
+      model_used: currentModel.value
+    }
+    messages.value.push(aiMessagePlaceholder)
+    
+    // 准备流式配置
+    const streamConfig: StreamRequestConfig = {
+      onMessage: (data: StreamResponseData) => {
+        if (data.error) {
+          // 处理错误
+          const errorMsg = data.content || 'AI服务发生错误'
+          error.value = errorMsg
+          
+          // 更新消息内容
+          const messageIndex = messages.value.findIndex(msg => msg.id === aiMessageId)
+          if (messageIndex !== -1) {
+            const message = messages.value[messageIndex]
+            if (message) {
+              message.content += errorMsg
+            }
+          }
+        } else if (data.done) {
+          // 流式完成
+          isStreaming.value = false
+          streamingController.value = null
+          
+          // 更新线程的活跃状态
+          if (currentThread.value) {
+            currentThread.value.is_active = true
+            currentThread.value.updated_at = new Date().toISOString()
+          }
+          
+          // 刷新用量信息
+          fetchAIUsage()
+        } else {
+          // 正常内容 - 确保内容不为空
+          if (data.content && data.content.trim()) {
+            // 更新消息内容
+            const messageIndex = messages.value.findIndex(msg => msg.id === aiMessageId)
+            if (messageIndex !== -1) {
+              const message = messages.value[messageIndex]
+              if (message) {
+                // 直接修改数组元素以触发响应式更新
+                message.content += data.content
+                
+                // 强制Vue更新（可选，如果仍然有问题）
+                // 创建一个新数组来触发响应式
+                messages.value = [...messages.value]
+              }
+            }
+          }
+        }
+      },
+      onError: (err: Error) => {
+        console.error('流式请求错误:', err)
+        error.value = err.message
+        isStreaming.value = false
+        streamingController.value = null
+        
+        if (aiMessageId !== null) {
+          // 更新错误消息
+          const messageIndex = messages.value.findIndex(msg => msg.id === aiMessageId)
+          if (messageIndex !== -1) {
+            const message = messages.value[messageIndex]
+            if (message) {
+              message.content += `\n[错误: ${err.message}]`
+            }
+          }
+        }
+      },
+      onComplete: () => {
+        // 流式请求完成
+        console.log('流式请求完成')
+      },
+      signal: controller.signal
+    }
+    
+    // 调用API发送流式消息
+    await chatApi.sendMessageStream({
+      thread_id: currentThread.value.id,
+      content,
+      model: currentModel.value
+    }, streamConfig)
+    
+    error.value = null
+    
+  } catch (err: unknown) {
+    console.error('发送消息失败:', err)
+    error.value = err instanceof Error ? err.message : '发送消息失败'
+    isStreaming.value = false
+    streamingController.value = null
+    
+    // 移除临时消息
+    if (messages.value.length >= 2) {
+      const lastMessage = messages.value[messages.value.length - 1]
+      const secondLastMessage = messages.value[messages.value.length - 2]
+      
+      // 检查最后两条消息是否是我们刚刚添加的
+      const shouldRemoveLastTwo = 
+        (userMessage && lastMessage?.id === userMessage.id) ||
+        (aiMessageId && lastMessage?.id === aiMessageId) ||
+        (userMessage && secondLastMessage?.id === userMessage.id) ||
+        (aiMessageId && secondLastMessage?.id === aiMessageId)
+      
+      if (shouldRemoveLastTwo) {
+        messages.value.splice(messages.value.length - 2, 2)
+      }
+    }
+    
+    throw err
+  }
+}
+
+  // 发送消息（非流式版本，向后兼容）
   const sendMessage = async (content: string): Promise<void> => {
     if (!currentConversation.value || !currentThread.value) {
       console.error('没有活跃的对话或线程')
@@ -242,7 +468,8 @@ export const useChatStore = defineStore('chat', () => {
       // 调用API发送消息
       const response = await chatApi.sendMessage({
         thread_id: currentThread.value.id,
-        content
+        content,
+        model: currentModel.value
       })
       
       // 用服务器返回的消息替换临时消息
@@ -252,6 +479,9 @@ export const useChatStore = defineStore('chat', () => {
       if (response.data.ai_message) {
         messages.value.push(response.data.ai_message)
       }
+      
+      // 刷新用量信息
+      await fetchAIUsage()
       
       error.value = null
     } catch (err: unknown) {
@@ -264,6 +494,36 @@ export const useChatStore = defineStore('chat', () => {
       isLoading.value = false
     }
   }
+
+  // 新增：停止流式生成
+  const stopStreaming = async (): Promise<void> => {
+    if (isStreaming.value && streamingController.value) {
+      try {
+        streamingController.value.abort()
+        await chatApi.stopGeneration()
+        isStreaming.value = false
+        streamingController.value = null
+        console.log('已停止流式生成')
+      } catch (err: unknown) {
+        console.error('停止生成失败:', err)
+        error.value = err instanceof Error ? err.message : '停止生成失败'
+      }
+    }
+  }
+  
+  // 获取模型显示名称的函数
+const getModelDisplayName = (model: string): string => {
+  const modelDisplayNames: Record<string, string> = {
+    'mock': '模拟模式',
+    '模拟模式': '模拟模式',
+    'deepseek-chat': 'DeepSeek Chat',
+    'deepseek-ai/DeepSeek-V3': 'DeepSeek V3',
+    'gpt-4': 'GPT-4',
+    'gpt-3.5-turbo': 'GPT-3.5 Turbo'
+  }
+  
+  return modelDisplayNames[model] || model
+}
 
   // 创建分支
   const createBranch = async (parentMessageId: number, newMessageContent?: string): Promise<Thread | null> => {
@@ -333,6 +593,9 @@ export const useChatStore = defineStore('chat', () => {
     try {
       isLoading.value = true
       
+      // 停止当前流式生成
+      await stopStreaming()
+      
       // 获取线程详情
       const threadResponse = await chatApi.getThread(threadId)
       currentThread.value = threadResponse.data
@@ -369,6 +632,12 @@ export const useChatStore = defineStore('chat', () => {
     error.value = null
   }
 
+  // 初始化store
+  const initialize = async (): Promise<void> => {
+    await fetchAvailableModels()
+    await fetchAIUsage()
+  }
+
   return {
     // 状态
     conversations,
@@ -379,21 +648,38 @@ export const useChatStore = defineStore('chat', () => {
     threadTree,
     error,
     
+    // 新增状态
+    isStreaming,
+    streamingModel,
+    aiUsage,
+    availableModels,
+    currentModel,
+    
     // 计算属性
     threadPath,
+    isTokenLimitReached,
     
     // 动作
     fetchConversations,
     createConversation,
     switchConversation,
     updateConversationTitle,
-    updateThread,  // 新增
+    updateThread,
     deleteConversation,
     fetchMessages,
-    sendMessage,
+    sendMessage,       // 非流式
+    sendMessageStream, // 流式
+    stopStreaming,     // 停止生成
+    getModelDisplayName, // 获取模型显示名称
     createBranch,
     switchThread,
     fetchThreadTree,
-    clearError
+    clearError,
+    
+    // 新增动作
+    fetchAIUsage,
+    fetchAvailableModels,
+    setCurrentModel,
+    initialize
   }
 })

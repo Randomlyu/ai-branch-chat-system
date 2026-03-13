@@ -1,9 +1,11 @@
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, AsyncGenerator
 from fastapi import APIRouter, Depends, HTTPException, status, Body
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from datetime import datetime
 import logging
 import os
+import json
 from dotenv import load_dotenv
 
 from ...database import get_db
@@ -448,7 +450,7 @@ async def send_message(
     current_user: dict = Depends(get_current_user),  # 添加认证
     db: Session = Depends(get_db)
 ):
-    """发送消息并获取AI回复"""
+    """发送消息并获取AI回复（非流式版本）"""
     try:
         # 1. 验证线程
         thread = db.query(models.Thread).filter(models.Thread.id == request.thread_id).first()
@@ -496,12 +498,22 @@ async def send_message(
             else:
                 ai_messages.append({"role": "assistant", "content": msg.content})
         
-        # 5. 调用AI服务
-        model = request.model or "deepseek-chat"
+        # 5. 调用AI服务（非流式）
+        model = request.model
         try:
-            ai_response = ai_service.chat_completion(
+            # 使用异步版本的chat_completion
+            ai_response = await ai_service.chat_completion(
                 messages=ai_messages,
-                model=model
+                model=model,
+                stream=False,
+                user_id=current_user["username"]  # 传递用户名作为用户标识
+            )
+        except ValueError as e:
+            # 处理Token用量上限错误
+            logger.warning(f"AI服务调用被限制: {str(e)}")
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=str(e)
             )
         except Exception as ai_error:
             logger.error(f"AI服务调用失败: {str(ai_error)}")
@@ -509,7 +521,8 @@ async def send_message(
             ai_response = {
                 "content": f"抱歉，AI服务暂时不可用。错误: {str(ai_error)}",
                 "model_used": "error",
-                "tokens": 0
+                "tokens": 0,
+                "is_streaming": False
             }
         
         # 6. 创建AI回复消息
@@ -545,6 +558,205 @@ async def send_message(
         db.rollback()
         logger.error(f"发送消息失败: {str(e)}")
         raise HTTPException(status_code=500, detail=f"发送消息失败: {str(e)}")
+
+
+@router.post("/chat/stream/")
+async def send_message_stream(
+    request: schemas.SendMessageRequest,
+    current_user: dict = Depends(get_current_user),  # 添加认证
+    db: Session = Depends(get_db)
+):
+    """发送消息并获取AI回复（流式版本）"""
+    async def event_generator():
+        try:
+            # 1. 验证线程
+            thread = db.query(models.Thread).filter(models.Thread.id == request.thread_id).first()
+            if not thread:
+                error_data = json.dumps({
+                    "content": "线程不存在",
+                    "error": True,
+                    "done": True
+                })
+                yield f"data: {error_data}\n\n"
+                return
+            
+            # 验证对话所有权
+            conversation = db.query(models.Conversation)\
+                .filter(models.Conversation.id == thread.conversation_id)\
+                .first()
+            
+            if conversation and conversation.user_id != current_user["id"]:
+                error_data = json.dumps({
+                    "content": "无权在此对话中发送消息",
+                    "error": True,
+                    "done": True
+                })
+                yield f"data: {error_data}\n\n"
+                return
+            
+            # 2. 获取父消息
+            parent_message = None
+            if request.parent_id:
+                parent_message = db.query(models.Message)\
+                    .filter(models.Message.id == request.parent_id)\
+                    .first()
+            
+            # 3. 创建用户消息
+            user_message = models.Message(
+                thread_id=request.thread_id,
+                role="user",
+                content=request.content,
+                parent_id=request.parent_id,
+                created_at=datetime.utcnow()
+            )
+            db.add(user_message)
+            db.commit()
+            db.refresh(user_message)
+            
+            # 4. 获取对话历史
+            history_messages = db.query(models.Message)\
+                .filter(models.Message.thread_id == request.thread_id)\
+                .order_by(models.Message.created_at.asc())\
+                .all()
+            
+            # 构建AI消息格式
+            ai_messages = []
+            for msg in history_messages:
+                if msg.role == "user":
+                    ai_messages.append({"role": "user", "content": msg.content})
+                else:
+                    ai_messages.append({"role": "assistant", "content": msg.content})
+            
+            # 5. 调用AI流式服务
+            model = request.model
+            ai_response_content = ""
+            
+            # 生成流式响应
+            stream_generator = ai_service.stream_chat_completion(
+                messages=ai_messages,
+                model=model,
+                user_id=current_user["username"]  # 传递用户名作为用户标识
+            )
+            
+            async for chunk in stream_generator:
+                yield chunk
+                
+                # 解析chunk以获取内容
+                if chunk.startswith("data: "):
+                    try:
+                        data_str = chunk[6:]  # 移除"data: "前缀
+                        if data_str.strip():  # 避免空字符串
+                            data = json.loads(data_str.strip())
+                            if "content" in data and not data.get("done") and not data.get("error"):
+                                ai_response_content += data["content"]
+                    except json.JSONDecodeError:
+                        pass
+            
+            # 6. 创建AI回复消息
+            ai_message = models.Message(
+                thread_id=request.thread_id,
+                role="assistant",
+                content=ai_response_content,
+                parent_id=user_message.id,
+                model_used=model or ai_service.get_default_model(),
+                created_at=datetime.utcnow()
+            )
+            db.add(ai_message)
+            
+            # 7. 更新线程的活跃状态
+            thread.is_active = True
+            thread.updated_at = datetime.utcnow()
+            
+            db.commit()
+            
+        except HTTPException as e:
+            error_data = json.dumps({
+                "content": f"HTTP错误: {e.detail}",
+                "error": True,
+                "done": True
+            })
+            yield f"data: {error_data}\n\n"
+        except Exception as e:
+            logger.error(f"流式发送消息失败: {str(e)}")
+            error_data = json.dumps({
+                "content": f"服务器错误: {str(e)}",
+                "error": True,
+                "done": True
+            })
+            yield f"data: {error_data}\n\n"
+    
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"  # 防止nginx缓冲
+        }
+    )
+
+
+@router.post("/chat/stop/")
+async def stop_generation(
+    current_user: dict = Depends(get_current_user)
+):
+    """停止当前用户的流式生成"""
+    try:
+        ai_service.stop_user_request(current_user["username"])
+        return {
+            "code": 200,
+            "message": "已发送停止请求",
+            "data": None
+        }
+    except Exception as e:
+        logger.error(f"停止生成失败: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"停止生成失败: {str(e)}"
+        )
+
+
+@router.get("/chat/usage/")
+async def get_ai_usage(
+    current_user: dict = Depends(get_current_user)
+):
+    """获取当前AI用量信息"""
+    try:
+        usage_info = ai_service.get_usage_info()
+        return {
+            "code": 200,
+            "message": "成功获取用量信息",
+            "data": usage_info
+        }
+    except Exception as e:
+        logger.error(f"获取用量信息失败: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"获取用量信息失败: {str(e)}"
+        )
+
+
+@router.get("/chat/models/")
+async def get_available_models(
+    current_user: dict = Depends(get_current_user)
+):
+    """获取可用的AI模型列表"""
+    try:
+        models_list = ai_service.get_available_models()
+        return {
+            "code": 200,
+            "message": "成功获取模型列表",
+            "data": {
+                "models": models_list,
+                "default_model": ai_service.get_default_model()
+            }
+        }
+    except Exception as e:
+        logger.error(f"获取模型列表失败: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"获取模型列表失败: {str(e)}"
+        )
 
 
 # ==================== 分支创建端点 ====================
