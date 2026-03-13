@@ -45,6 +45,11 @@ class Thread(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
     updated_at = Column(DateTime(timezone=True), onupdate=func.now(), server_default=func.now(), index=True)
     
+    # ===== 新增字段（插入在 updated_at 之后）=====
+    depth = Column(Integer, nullable=False, default=0, server_default="0", 
+                  comment="分支深度：主分支=0，每分支+1，最大3")
+    # ============================================
+
     # 明确指定外键，避免多路径问题
     conversation = relationship("Conversation", back_populates="threads")
     

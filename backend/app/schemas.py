@@ -2,6 +2,8 @@ from typing import Optional, List, Dict, Any
 from pydantic import BaseModel, ConfigDict
 from datetime import datetime
 
+class ThreadUpdate(BaseModel):
+    title: str
 
 # 基础模型
 class MessageBase(BaseModel):
@@ -29,7 +31,9 @@ class ThreadBase(BaseModel):
     parent_message_id: Optional[int] = None
     title: Optional[str] = None
     is_active: bool = False
-
+    # ===== 新增字段（插入在 is_active 之后）=====
+    depth: int = 0  # 分支深度：主分支=0，每分支+1
+    # ============================================
 
 class ThreadCreate(ThreadBase):
     pass

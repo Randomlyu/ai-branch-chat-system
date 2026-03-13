@@ -15,6 +15,7 @@ export interface Thread {
   is_active: boolean
   created_at: string
   updated_at: string
+  depth: number 
 }
 
 export interface Message {
@@ -52,12 +53,18 @@ export interface CreateBranchRequest {
   new_message_content?: string
 }
 
+// 添加 ThreadUpdate 接口
+export interface ThreadUpdate {
+  title: string
+}
+
 // 分支树类型
 export interface ThreadTree {
   id: number
   conversation_id: number
   parent_message_id?: number
   title?: string
+  depth: number 
   is_active: boolean
   created_at: string
   updated_at: string

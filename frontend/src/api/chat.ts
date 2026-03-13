@@ -8,7 +8,8 @@ import type {
   SendMessageRequest,
   SendMessageResponse,
   CreateBranchRequest,
-  ApiResponse
+  ApiResponse,
+  ThreadUpdate  // 新增导入
 } from '@/types/chat'
 
 // 创建axios实例
@@ -23,11 +24,9 @@ const apiClient = axios.create({
 // 请求拦截器
 apiClient.interceptors.request.use(
   (config) => {
-    // 这里可以添加token等认证信息
-    const token = localStorage.getItem('access_token')
-    if (token) {
-      config.headers.Authorization = `Bearer ${token}`
-    }
+    // 添加固定Token（使用alice的Token）
+    config.headers.Authorization = 'Bearer dev_token_alice'
+    
     console.log(`请求: ${config.method?.toUpperCase()} ${config.baseURL}${config.url}`)
     return config
   },
@@ -66,6 +65,8 @@ apiClient.interceptors.response.use(
         message = data.message
       } else if (status === 401) {
         message = '未授权，请登录'
+      } else if (status === 403) {
+        message = '拒绝访问'
       } else if (status === 404) {
         message = '资源不存在'
       } else if (status >= 500) {
@@ -107,6 +108,11 @@ export const getThread = async (id: number): Promise<ApiResponse<Thread>> => {
   return apiClient.get(`/threads/${id}`)
 }
 
+// 新增：更新线程标题
+export const updateThreadTitle = async (threadId: number, data: ThreadUpdate): Promise<ApiResponse<Thread>> => {
+  return apiClient.put(`/threads/${threadId}`, data)
+}
+
 export const getConversationThreads = async (conversationId: number): Promise<ApiResponse<Thread[]>> => {
   return apiClient.get(`/conversations/${conversationId}/threads`)
 }
@@ -135,6 +141,7 @@ export default {
   updateConversation,
   deleteConversation,
   getThread,
+  updateThreadTitle,  // 新增导出
   getConversationThreads,
   getThreadMessages,
   sendMessage,
