@@ -53,6 +53,14 @@ export interface CreateBranchRequest {
   new_message_content?: string
 }
 
+// 删除消息响应类型
+export interface DeleteMessageResponse {
+  deleted_messages: number[];
+  fixed_messages: number[];
+  connection_point: number | null;
+  is_latest_deleted: boolean;
+}
+
 // 添加 ThreadUpdate 接口
 export interface ThreadUpdate {
   title: string

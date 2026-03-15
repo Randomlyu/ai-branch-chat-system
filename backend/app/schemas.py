@@ -87,3 +87,22 @@ class CreateBranchRequest(BaseModel):
     conversation_id: int
     parent_message_id: int
     new_message_content: Optional[str] = None
+
+class DeleteMessageRequest(BaseModel):
+    """删除消息请求模型"""
+    pass
+
+
+class DeleteMessageResponse(BaseModel):
+    """删除消息响应模型"""
+    code: int
+    message: str
+    data: Optional[Dict[str, Any]] = None
+
+
+class MessageDeleteInfo(BaseModel):
+    """消息删除详情"""
+    deleted_messages: List[int]
+    fixed_messages: List[int]
+    connection_point: Optional[int] = None
+    is_latest_deleted: bool

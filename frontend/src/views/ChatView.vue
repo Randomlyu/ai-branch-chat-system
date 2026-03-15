@@ -228,8 +228,8 @@
               <button 
                 class="btn-action delete-btn"
                 @click="deleteMessage(msg.id)"
-                :disabled="isStreaming"
-                title="删除此消息及其上下文"
+                :disabled="isStreaming || isMessageBranchingPoint(msg.id)"
+                :title="getDeleteButtonTitle(msg)"
               >
                 <svg class="action-icon" viewBox="0 0 24 24" width="16" height="16">
                   <path fill="currentColor" d="M19,4H15.5L14.5,3H9.5L8.5,4H5V6H19M6,19A2,2 0 0,0 8,21H16A2,2 0 0,0 18,19V7H6V19Z"/>
@@ -389,6 +389,11 @@ const {
   currentModel,
   isTokenLimitReached
 } = storeToRefs(chatStore)
+
+const {
+  deleteMessage: deleteMessageInStore,
+  isMessageBranchingPoint
+} = chatStore
 
 // ---------- 本地响应式数据 ----------
 const userInput = ref('')
@@ -687,6 +692,23 @@ const getBranchButtonTitle = (msg: Message) => {
   return '从此回复创建新分支'
 }
 
+// 获取删除按钮标题
+const getDeleteButtonTitle = (msg: Message) => {
+  if (isStreaming.value) {
+    return '请等待生成完成'
+  }
+  
+  if (isMessageBranchingPoint(msg.id)) {
+    return '此消息已被分支引用，无法删除'
+  }
+  
+  if (msg.role !== 'assistant') {
+    return '只能删除AI消息'
+  }
+  
+  return '删除此AI回复及其对应的用户提问'
+}
+
 const switchThread = async (threadId: number) => {
   if (isStreaming.value) {
     showToast('请等待生成完成后再切换', 'error')
@@ -737,7 +759,14 @@ const deleteMessage = async (messageId: number) => {
     return
   }
   
-  if (!confirm('确定要删除这条消息及其上下文吗？此操作不可恢复。')) {
+  // 检查消息是否被分支引用
+  if (isMessageBranchingPoint(messageId)) {
+    showToast('此消息已被分支引用，无法删除', 'error')
+    return
+  }
+
+   // 确认对话框
+  if (!confirm('确定要删除此AI回复及其对应的提问吗？此操作不可撤销。')) {
     return
   }
   
@@ -745,26 +774,41 @@ const deleteMessage = async (messageId: number) => {
     // 记录要删除的消息ID，便于后续调试
     console.log('尝试删除消息，ID:', messageId)
     
-    // 查找当前消息在消息列表中的索引
-    const messageIndex = messages.value.findIndex(msg => msg.id === messageId)
-    if (messageIndex === -1) {
-      throw new Error('消息不存在')
+    // 检查当前线程
+    if (!currentThread.value) {
+      showToast('当前没有活跃的线程', 'error')
+      return
+    }
+
+    // 检查要删除的消息是否存在且是AI消息
+    const messageToDelete = messages.value.find(msg => msg.id === messageId)
+    if (!messageToDelete) {
+      showToast('消息不存在', 'error')
+      return
     }
     
-    const messageToDelete = messages.value[messageIndex]
-    console.log('要删除的消息:', messageToDelete)
+    if (messageToDelete.role !== 'assistant') {
+      showToast('只能删除AI消息', 'error')
+      return
+    }
     
-    // 这里调用store的删除消息方法
-    // 注意：删除功能需要后端支持，这里先模拟实现
-    // 实际实现应该是：
-    // await chatStore.deleteMessage(messageId)
+    // 调用store的删除消息方法
+    const result = await deleteMessageInStore(currentThread.value.id, messageId)
     
-    // 模拟删除成功
-    showToast('消息删除功能开发中，后端API就绪后即可使用', 'success')
+     if (result.success) {
+      showToast('消息删除成功', 'success')
+      console.log('删除详情:', result.data)
+      
+      // 滚动到底部
+      scrollToBottom()
+    } else {
+      showToast(result.error || '删除失败', 'error')
+    }
     
   } catch (error) {
     console.error('删除消息失败:', error)
-    showToast('删除功能开发中，后端API就绪后即可使用', 'error')
+    const errorMsg = error instanceof Error ? error.message : '删除消息失败'
+    showToast(errorMsg, 'error')
   }
 }
 

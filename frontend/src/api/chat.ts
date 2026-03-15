@@ -244,6 +244,19 @@ export const sendMessageStream = async (
   await sendStreamRequest('/chat/stream/', data, config)
 }
 
+// 新增：删除消息
+export const deleteMessage = async (
+  threadId: number, 
+  messageId: number
+): Promise<ApiResponse<{
+  deleted_messages: number[];
+  fixed_messages: number[];
+  connection_point: number | null;
+  is_latest_deleted: boolean;
+}>> => {
+  return apiClient.delete(`/threads/${threadId}/messages/${messageId}`);
+};
+
 // 新增：停止生成
 export const stopGeneration = async (): Promise<ApiResponse<void>> => {
   return apiClient.post('/chat/stop/')
@@ -280,5 +293,6 @@ export default {
   getAIUsage,         // 新增
   getAvailableModels, // 新增
   createBranch,
-  getThreadTree
+  getThreadTree,
+  deleteMessage  // 新增
 }

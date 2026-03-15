@@ -715,6 +715,85 @@ async def stop_generation(
             detail=f"停止生成失败: {str(e)}"
         )
 
+@router.delete("/threads/{thread_id}/messages/{message_id}", response_model=schemas.DeleteMessageResponse)
+def delete_message(
+    thread_id: int,
+    message_id: int,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    删除消息对（AI消息 + 对应的用户消息）
+    注意：只能删除AI消息，会自动删除对应的用户消息
+    """
+    try:
+        # 1. 验证线程存在
+        thread = db.query(models.Thread).filter(
+            models.Thread.id == thread_id
+        ).first()
+        
+        if not thread:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="线程不存在"
+            )
+        
+        # 2. 验证对话所有权
+        conversation = db.query(models.Conversation).filter(
+            models.Conversation.id == thread.conversation_id
+        ).first()
+        
+        if not conversation:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="对话不存在"
+            )
+        
+        if conversation.user_id != current_user["id"]:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="无权删除此线程中的消息"
+            )
+        
+        # 3. 验证消息存在且属于该线程
+        message = db.query(models.Message).filter(
+            models.Message.id == message_id,
+            models.Message.thread_id == thread_id
+        ).first()
+        
+        if not message:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="消息不存在或不属于此线程"
+            )
+        
+        # 4. 创建删除管理器并执行删除
+        manager = DeletionManager(db)
+        success, message_text, delete_info = manager.delete_message_pair(
+            message_id, 
+            current_user["id"]
+        )
+        
+        if not success:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=message_text
+            )
+        
+        return {
+            "code": 200,
+            "message": message_text,
+            "data": delete_info
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"删除消息端点错误: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"服务器内部错误: {str(e)}"
+        )
 
 @router.get("/chat/usage/")
 async def get_ai_usage(

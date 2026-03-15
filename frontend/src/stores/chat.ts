@@ -10,7 +10,8 @@ import type {
   StreamRequestConfig,
   StreamResponseData,
   AIUsageInfo,
-  ModelsResponse
+  ModelsResponse,
+  DeleteMessageResponse
 } from '@/types/chat'
 import * as chatApi from '@/api/chat'
 
@@ -588,6 +589,74 @@ const getModelDisplayName = (model: string): string => {
     }
   }
 
+// 删除消息
+const deleteMessage = async (threadId: number, messageId: number): Promise<{
+  success: boolean;
+  error?: string;
+  data?: DeleteMessageResponse;
+}> => {
+  try {
+    isLoading.value = true
+    const response = await chatApi.deleteMessage(threadId, messageId)
+    
+    if (response.code === 200) {
+      // 1. 从本地消息列表中移除被删除的消息
+      const deletedIds = response.data.deleted_messages
+      messages.value = messages.value.filter(msg => !deletedIds.includes(msg.id))
+      
+      // 2. 修复被影响消息的parent_id
+      if (response.data.fixed_messages && response.data.fixed_messages.length > 0) {
+        // 重新获取消息以确保数据一致性
+        await fetchMessages()
+      }
+      
+      // 3. 如果删除的是最新消息，刷新消息列表
+      if (response.data.is_latest_deleted) {
+        await fetchMessages()
+      }
+      
+      error.value = null
+      return { success: true, data: response.data }
+    } else {
+      error.value = response.message || '删除消息失败'
+      return { success: false, error: response.message }
+    }
+  } catch (err: unknown) {
+    console.error('删除消息失败:', err)
+    error.value = err instanceof Error ? err.message : '删除消息失败'
+    return { 
+      success: false, 
+      error: err instanceof Error ? err.message : '删除消息失败' 
+    }
+  } finally {
+    isLoading.value = false
+  }
+}
+
+// 检查消息是否被分支引用
+const isMessageBranchingPoint = (messageId: number): boolean => {
+  if (!threadTree.value || threadTree.value.length === 0) {
+    return false
+  }
+  
+  // 递归检查分支树
+  const checkTree = (nodes: ThreadTree[]): boolean => {
+    for (const node of nodes) {
+      if (node.parent_message_id === messageId) {
+        return true
+      }
+      if (node.children && node.children.length > 0) {
+        if (checkTree(node.children)) {
+          return true
+        }
+      }
+    }
+    return false
+  }
+  
+  return checkTree(threadTree.value)
+}
+
   // 切换线程
   const switchThread = async (threadId: number): Promise<void> => {
     try {
@@ -675,6 +744,8 @@ const getModelDisplayName = (model: string): string => {
     switchThread,
     fetchThreadTree,
     clearError,
+    deleteMessage,
+    isMessageBranchingPoint,
     
     // 新增动作
     fetchAIUsage,
