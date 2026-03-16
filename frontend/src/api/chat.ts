@@ -93,6 +93,9 @@ export interface StreamResponseData {
   content: string
   done: boolean
   error?: boolean
+   message_id?: number
+  user_message_id?: number
+  model_used?: string  // 新增
 }
 
 // 流式请求配置

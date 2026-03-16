@@ -91,6 +91,9 @@ export interface StreamResponseData {
   content: string
   done: boolean
   error?: boolean
+  message_id?: number  // 新增：消息ID
+  user_message_id?: number  // 新增：用户消息ID
+  model_used?: string  // 新增：使用的模型
 }
 
 // AI用量信息

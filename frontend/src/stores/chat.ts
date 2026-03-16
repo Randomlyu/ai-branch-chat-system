@@ -298,7 +298,8 @@ const sendMessageStream = async (content: string): Promise<void> => {
   
   // 在外部定义变量，以便catch块中可以访问
   let userMessage: Message | null = null
-  let aiMessageId: number | null = null
+  let tempAiMessageId: number | null = null
+  const currentContent = content // 保存用户输入的内容用于后续匹配
   
   try {
     // 停止之前的流式请求
@@ -325,9 +326,9 @@ const sendMessageStream = async (content: string): Promise<void> => {
     messages.value.push(userMessage)
     
     // 为AI消息创建占位符
-    aiMessageId = Date.now() + 1
+    tempAiMessageId = Date.now() + 1
     const aiMessagePlaceholder: Message = {
-      id: aiMessageId,
+      id: tempAiMessageId,
       thread_id: currentThread.value.id,
       role: 'assistant',
       content: '', // 初始为空
@@ -346,17 +347,62 @@ const sendMessageStream = async (content: string): Promise<void> => {
           error.value = errorMsg
           
           // 更新消息内容
-          const messageIndex = messages.value.findIndex(msg => msg.id === aiMessageId)
+          const messageIndex = messages.value.findIndex(msg => msg.id === tempAiMessageId)
           if (messageIndex !== -1) {
             const message = messages.value[messageIndex]
             if (message) {
               message.content += errorMsg
+              // 强制响应式更新
+              messages.value = [...messages.value]
             }
           }
         } else if (data.done) {
           // 流式完成
           isStreaming.value = false
           streamingController.value = null
+          
+          // 处理消息ID更新
+          if (data.message_id && data.user_message_id) {
+            // 方案A：如果有消息ID，直接更新本地消息
+            setTimeout(() => {
+              // 更新用户消息ID
+              const userMsgIndex = messages.value.findIndex(msg => 
+                msg.role === 'user' && msg.id === userMessage?.id
+              )
+              if (userMsgIndex !== -1 && messages.value[userMsgIndex]) {
+                messages.value[userMsgIndex].id = data.user_message_id!
+              }
+              
+              // 更新AI消息ID
+              if (tempAiMessageId !== null) {
+                const aiMsgIndex = messages.value.findIndex(msg => msg.id === tempAiMessageId)
+                if (aiMsgIndex !== -1 && messages.value[aiMsgIndex]) {
+                  messages.value[aiMsgIndex].id = data.message_id!
+                  // 确保模型信息完整
+                  if (data.model_used) {
+                    messages.value[aiMsgIndex].model_used = data.model_used
+                  }
+                }
+              }
+              
+              // 触发响应式更新
+              messages.value = [...messages.value]
+              console.log('已更新消息ID:', { 
+                userMsgId: data.user_message_id, 
+                aiMsgId: data.message_id 
+              })
+            }, 0)
+          } else {
+            // 方案B：如果没有消息ID，重新获取消息列表
+            setTimeout(async () => {
+              try {
+                console.log('重新获取消息列表以获取真实ID...')
+                await fetchMessages()
+              } catch (fetchError) {
+                console.error('重新获取消息失败:', fetchError)
+              }
+            }, 300) // 等待300ms确保后端已保存消息
+          }
           
           // 更新线程的活跃状态
           if (currentThread.value) {
@@ -370,15 +416,15 @@ const sendMessageStream = async (content: string): Promise<void> => {
           // 正常内容 - 确保内容不为空
           if (data.content && data.content.trim()) {
             // 更新消息内容
-            const messageIndex = messages.value.findIndex(msg => msg.id === aiMessageId)
+            const messageIndex = messages.value.findIndex(msg => msg.id === tempAiMessageId)
             if (messageIndex !== -1) {
               const message = messages.value[messageIndex]
               if (message) {
-                // 直接修改数组元素以触发响应式更新
+                // 使用Vue的响应式更新
                 message.content += data.content
                 
-                // 强制Vue更新（可选，如果仍然有问题）
-                // 创建一个新数组来触发响应式
+                // 关键：强制响应式更新 - 通过创建新数组
+                // 这解决了格式显示问题
                 messages.value = [...messages.value]
               }
             }
@@ -391,13 +437,14 @@ const sendMessageStream = async (content: string): Promise<void> => {
         isStreaming.value = false
         streamingController.value = null
         
-        if (aiMessageId !== null) {
+        if (tempAiMessageId !== null) {
           // 更新错误消息
-          const messageIndex = messages.value.findIndex(msg => msg.id === aiMessageId)
+          const messageIndex = messages.value.findIndex(msg => msg.id === tempAiMessageId)
           if (messageIndex !== -1) {
             const message = messages.value[messageIndex]
             if (message) {
               message.content += `\n[错误: ${err.message}]`
+              messages.value = [...messages.value]
             }
           }
         }
@@ -432,12 +479,14 @@ const sendMessageStream = async (content: string): Promise<void> => {
       // 检查最后两条消息是否是我们刚刚添加的
       const shouldRemoveLastTwo = 
         (userMessage && lastMessage?.id === userMessage.id) ||
-        (aiMessageId && lastMessage?.id === aiMessageId) ||
+        (tempAiMessageId && lastMessage?.id === tempAiMessageId) ||
         (userMessage && secondLastMessage?.id === userMessage.id) ||
-        (aiMessageId && secondLastMessage?.id === aiMessageId)
+        (tempAiMessageId && secondLastMessage?.id === tempAiMessageId)
       
       if (shouldRemoveLastTwo) {
         messages.value.splice(messages.value.length - 2, 2)
+        // 触发响应式更新
+        messages.value = [...messages.value]
       }
     }
     

@@ -662,12 +662,23 @@ async def send_message_stream(
                 created_at=datetime.utcnow()
             )
             db.add(ai_message)
-            
+            db.flush()  # 刷新以获取消息ID，但不提交事务
+
             # 7. 更新线程的活跃状态
             thread.is_active = True
             thread.updated_at = datetime.utcnow()
-            
+
             db.commit()
+
+            # 8. 发送包含消息ID的最后一个chunk
+            message_data = json.dumps({
+                "content": "",
+                "done": True,
+                "message_id": ai_message.id,
+                "user_message_id": user_message.id,
+                "model_used": model or ai_service.get_default_model()
+            })
+            yield f"data: {message_data}\n\n"
             
         except HTTPException as e:
             error_data = json.dumps({
