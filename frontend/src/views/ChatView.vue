@@ -743,13 +743,54 @@ const copyMessage = async (content: string) => {
   }
 }
 
-const regenerateMessage = (messageId: number) => {
+const regenerateMessage = async (messageId: number) => {
   if (isStreaming.value) {
     showToast('请等待当前生成完成', 'error')
     return
   }
-  console.log('重新生成消息:', messageId)
-  alert('重新生成功能待实现')
+  
+  try {
+    // 检查是否是最新消息
+    const messages = chatStore.messages
+    if (messages.length === 0) {
+      showToast('没有可重新生成的消息', 'error')
+      return
+    }
+    
+    const latestMessage = messages[messages.length - 1]
+    if (!latestMessage || latestMessage.id !== messageId) {
+      showToast('只能重新生成最新AI消息', 'error')
+      return
+    }
+    
+    // 检查是否被分支引用
+    if (chatStore.isMessageBranchingPoint(messageId)) {
+      showToast('此消息已被分支引用，无法重新生成', 'error')
+      return
+    }
+    
+    // 确认操作
+    if (!confirm('确定要重新生成此消息吗？')) {
+      return
+    }
+    
+    // 调用重新生成
+    const result = await chatStore.regenerateMessage(
+      chatStore.currentThread?.id!,
+      messageId,
+      chatStore.currentModel,
+      true  // 默认使用流式
+    )
+    
+    if (result.success) {
+      showToast('消息重新生成中...', 'success')
+    } else {
+      showToast(result.error || '重新生成失败', 'error')
+    }
+  } catch (error) {
+    console.error('重新生成失败:', error)
+    showToast('重新生成失败', 'error')
+  }
 }
 
 // 新增：删除消息

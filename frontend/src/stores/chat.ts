@@ -682,6 +682,201 @@ const deleteMessage = async (threadId: number, messageId: number): Promise<{
   }
 }
 
+// 重新生成消息
+const regenerateMessage = async (
+  threadId: number,
+  messageId: number,
+  model?: string,
+  stream: boolean = false
+): Promise<{
+  success: boolean;
+  error?: string;
+  data?: Message;
+}> => {
+  try {
+    isLoading.value = true
+    
+    if (stream) {
+      // 流式重新生成
+      const tempNewMessageId = Date.now()  // 改为 const
+      const oldMessage = messages.value.find(msg => msg.id === messageId)
+      const parentId = oldMessage?.parent_id
+      
+      const controller = new AbortController()
+      streamingController.value = controller
+      isStreaming.value = true
+      streamingModel.value = model || currentModel.value
+      
+      // 在流式开始前，先移除旧消息
+      const oldMessageIndex = messages.value.findIndex(msg => msg.id === messageId)
+      if (oldMessageIndex !== -1) {
+        messages.value.splice(oldMessageIndex, 1)
+        messages.value = [...messages.value] // 触发响应式更新
+      }
+      
+      // 准备流式配置
+      const streamConfig: StreamRequestConfig = {
+        onMessage: (data: StreamResponseData) => {
+          if (data.error) {
+            // 处理错误
+            const errorMsg = data.content || '重新生成失败'
+            error.value = errorMsg
+            
+            const messageIndex = messages.value.findIndex(msg => msg.id === tempNewMessageId)
+            if (messageIndex !== -1) {
+              const message = messages.value[messageIndex]
+              if (message) {
+                message.content += errorMsg
+                messages.value = [...messages.value]
+              }
+            }
+          } else if (data.done) {
+            // 流式完成
+            isStreaming.value = false
+            streamingController.value = null
+            
+            // 处理消息ID更新
+            if (data.message_id) {
+              const messageIndex = messages.value.findIndex(msg => msg.id === tempNewMessageId)
+              if (messageIndex !== -1 && messages.value[messageIndex]) {
+                messages.value[messageIndex].id = data.message_id
+                if (data.model_used) {
+                  messages.value[messageIndex].model_used = data.model_used
+                }
+                
+                // 触发响应式更新
+                messages.value = [...messages.value]
+                console.log('已更新重新生成的消息ID:', data.message_id)
+              }
+            } else {
+              // 重新获取消息列表
+              setTimeout(async () => {
+                try {
+                  await fetchMessages()
+                } catch (fetchError) {
+                  console.error('重新获取消息失败:', fetchError)
+                }
+              }, 300)
+            }
+            
+            // 刷新用量信息
+            fetchAIUsage()
+          } else {
+            // 正常内容
+            if (data.content && data.content.trim()) {
+              // 查找或创建临时消息
+              const messageIndex = messages.value.findIndex(msg => msg.id === tempNewMessageId)
+              
+              if (messageIndex === -1) {
+                // 创建临时消息
+                const tempMessage: Message = {
+                  id: tempNewMessageId,
+                  thread_id: threadId,
+                  role: 'assistant',
+                  content: data.content,
+                  created_at: new Date().toISOString(),
+                  parent_id: parentId,
+                  model_used: model || currentModel.value
+                }
+                // 通过创建新数组触发响应式更新
+                messages.value = [...messages.value, tempMessage]  // 一次性添加
+              } else {
+                // 更新现有消息
+                const message = messages.value[messageIndex]
+                if (message) {
+                  // 直接更新对象属性
+                  message.content += data.content
+                  // 只在特定时机触发响应式更新
+                  if (data.content.length > 20 || data.content.includes('\n')) {
+                    messages.value = [...messages.value]
+                  }
+                }
+              }
+            }
+          }
+        },
+        onError: (err: Error) => {
+          console.error('流式重新生成失败:', err)
+          error.value = err.message
+          isStreaming.value = false
+          streamingController.value = null
+          
+          // 如果发生错误，重新获取消息列表恢复状态
+          setTimeout(async () => {
+            try {
+              await fetchMessages()
+            } catch (fetchError) {
+              console.error('重新获取消息失败:', fetchError)
+            }
+          }, 300)
+        },
+        onComplete: () => {
+          console.log('流式重新生成完成')
+        },
+        signal: controller.signal
+      }
+      
+      // 调用API
+      await chatApi.regenerateMessageStream(
+        threadId,
+        messageId,
+        { model, stream: true },
+        streamConfig
+      )
+      
+      error.value = null
+      return { success: true, data: undefined }
+      
+    } else {
+      // 非流式重新生成
+      const response = await chatApi.regenerateMessage(
+        threadId,
+        messageId,
+        { model, stream: false }
+      )
+      
+      if (response.code === 200) {
+        const newMessage = response.data.new_message
+        
+        // 1. 找到并删除旧消息
+        const oldMessageIndex = messages.value.findIndex(msg => msg.id === messageId)
+        if (oldMessageIndex !== -1) {
+          messages.value.splice(oldMessageIndex, 1)
+        }
+        
+        // 2. 添加新消息
+        messages.value.push(newMessage)
+        
+        // 3. 重新排序
+        messages.value.sort((a, b) => 
+          new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+        )
+        
+        // 4. 触发响应式更新
+        messages.value = [...messages.value]
+        
+        // 5. 刷新用量信息
+        await fetchAIUsage()
+        
+        error.value = null
+        return { success: true, data: newMessage }
+      } else {
+        error.value = response.message || '重新生成失败'
+        return { success: false, error: response.message }
+      }
+    }
+  } catch (err: unknown) {
+    console.error('重新生成消息失败:', err)
+    error.value = err instanceof Error ? err.message : '重新生成消息失败'
+    return { 
+      success: false, 
+      error: err instanceof Error ? err.message : '重新生成消息失败' 
+    }
+  } finally {
+    isLoading.value = false
+  }
+}
+
 // 检查消息是否被分支引用
 const isMessageBranchingPoint = (messageId: number): boolean => {
   if (!threadTree.value || threadTree.value.length === 0) {
@@ -784,6 +979,7 @@ const isMessageBranchingPoint = (messageId: number): boolean => {
     updateConversationTitle,
     updateThread,
     deleteConversation,
+    regenerateMessage,
     fetchMessages,
     sendMessage,       // 非流式
     sendMessageStream, // 流式

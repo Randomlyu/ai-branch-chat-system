@@ -106,3 +106,22 @@ class MessageDeleteInfo(BaseModel):
     fixed_messages: List[int]
     connection_point: Optional[int] = None
     is_latest_deleted: bool
+
+class RegenerateMessageRequest(BaseModel):
+    """重新生成消息请求模型"""
+    model: Optional[str] = None
+    stream: bool = False
+
+
+class RegenerateMessageResponse(BaseModel):
+    """重新生成消息响应模型"""
+    code: int
+    message: str
+    data: Optional[Dict[str, Any]] = None
+
+
+class RegenerateMessageData(BaseModel):
+    """重新生成消息数据模型"""
+    new_message: Message
+    old_message_id: int
+    user_message_id: int

@@ -243,3 +243,113 @@ class DeletionManager:
         self.db.rollback()
         logger.error(f"未知错误 - 删除消息 {ai_message_id}: {str(e)}")
         return False, f"未知错误: {str(e)}", {}
+    
+    def regenerate_message(
+        self, 
+        ai_message_id: int, 
+        model: Optional[str] = None, 
+        stream: bool = False,
+        user_id: Optional[int] = None
+    ) -> Tuple[bool, str, Dict[str, Any]]:
+        """
+        重新生成AI消息
+        
+        规则：
+        1. 必须是AI消息
+        2. 必须是当前线程的最新消息
+        3. 不能被分支引用
+        4. 对应的用户消息必须存在
+        """
+        try:
+            # 1. 验证AI消息存在
+            ai_message = self.db.query(models.Message).filter(
+                models.Message.id == ai_message_id
+            ).first()
+            
+            if not ai_message:
+                return False, "AI消息不存在", {}
+            
+            # 2. 验证必须是AI消息
+            if ai_message.role != "assistant":
+                return False, "只能重新生成AI消息", {}
+            
+            # 3. 验证线程存在
+            thread = self.db.query(models.Thread).filter(
+                models.Thread.id == ai_message.thread_id
+            ).first()
+            
+            if not thread:
+                return False, "线程不存在", {}
+            
+            # 4. 验证对话存在和所有权
+            conversation = self.db.query(models.Conversation).filter(
+                models.Conversation.id == thread.conversation_id
+            ).first()
+            
+            if not conversation:
+                return False, "对话不存在", {}
+            
+            if user_id is not None and conversation.user_id != user_id:
+                return False, "无权重新生成此消息", {}
+            
+            # 5. 检查该消息是否被分支引用
+            thread_refs = self.db.query(models.Thread).filter(
+                models.Thread.parent_message_id == ai_message_id
+            ).count()
+            
+            if thread_refs > 0:
+                return False, "此消息已被分支引用，无法重新生成", {}
+            
+            # 6. 检查是否是最新消息
+            latest_message = self.db.query(models.Message).filter(
+                models.Message.thread_id == ai_message.thread_id
+            ).order_by(models.Message.created_at.desc()).first()
+            
+            if not latest_message or latest_message.id != ai_message_id:
+                return False, "只能重新生成最新AI消息", {}
+            
+            # 7. 获取对应的用户消息
+            user_message = self.db.query(models.Message).filter(
+                models.Message.id == ai_message.parent_id,
+                models.Message.role == "user"
+            ).first()
+            
+            if not user_message:
+                return False, "找不到对应的用户消息", {}
+            
+            # 8. 获取历史消息作为上下文
+            history_messages = self.db.query(models.Message).filter(
+                models.Message.thread_id == ai_message.thread_id,
+                models.Message.created_at <= user_message.created_at
+            ).order_by(models.Message.created_at.asc()).all()
+            
+            # 构建AI消息格式
+            ai_messages = []
+            for msg in history_messages:
+                if msg.role == "user":
+                    ai_messages.append({"role": "user", "content": msg.content})
+                else:
+                    ai_messages.append({"role": "assistant", "content": msg.content})
+            
+            # 9. 保存旧消息信息
+            old_ai_message_id = ai_message.id
+            old_content = ai_message.content
+            old_model_used = ai_message.model_used
+            old_created_at = ai_message.created_at
+            
+            # 返回信息结构
+            regenerate_info = {
+                "old_message_id": old_ai_message_id,
+                "user_message_id": user_message.id,
+                "history_messages": ai_messages,
+                "thread_id": thread.id,
+                "conversation_id": conversation.id,
+                "user_id": conversation.user_id
+            }
+            
+            return True, "可以重新生成消息", regenerate_info
+            
+        except Exception as e:
+            self.db.rollback()
+            logger.error(f"验证重新生成消息失败: {str(e)}")
+            return False, f"验证失败: {str(e)}", {} 

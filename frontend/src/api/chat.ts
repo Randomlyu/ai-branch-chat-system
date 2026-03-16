@@ -9,7 +9,8 @@ import type {
   SendMessageResponse,
   CreateBranchRequest,
   ApiResponse,
-  ThreadUpdate
+  ThreadUpdate,
+  RegenerateMessageRequest
 } from '@/types/chat'
 
 // 创建axios实例
@@ -259,6 +260,29 @@ export const deleteMessage = async (
 }>> => {
   return apiClient.delete(`/threads/${threadId}/messages/${messageId}`);
 };
+
+// 重新生成消息
+export const regenerateMessage = async (
+  threadId: number,
+  messageId: number,
+  data: RegenerateMessageRequest = {}
+): Promise<ApiResponse<{
+  new_message: Message;
+  old_message_id: number;
+  user_message_id: number;
+}>> => {
+  return apiClient.post(`/threads/${threadId}/messages/${messageId}/regenerate`, data)
+}
+
+// 流式重新生成消息
+export const regenerateMessageStream = async (
+  threadId: number,
+  messageId: number,
+  data: RegenerateMessageRequest = {},
+  config: StreamRequestConfig
+): Promise<void> => {
+  await sendStreamRequest(`/threads/${threadId}/messages/${messageId}/regenerate`, data, config)
+}
 
 // 新增：停止生成
 export const stopGeneration = async (): Promise<ApiResponse<void>> => {

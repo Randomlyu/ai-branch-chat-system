@@ -120,3 +120,18 @@ export interface StreamRequestConfig {
   onComplete?: () => void
   signal?: AbortSignal
 }
+
+export interface RegenerateMessageRequest {
+  model?: string
+  stream?: boolean
+}
+
+export interface RegenerateMessageResponse {
+  code: number
+  message: string
+  data?: {
+    new_message: Message
+    old_message_id: number
+    user_message_id: number
+  }
+}
