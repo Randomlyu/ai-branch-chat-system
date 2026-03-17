@@ -874,48 +874,63 @@ async def regenerate_message(
         
         # 6. 调用AI服务
         model_to_use = request.model or old_ai_message.model_used
-        try:
-            if request.stream:
-                # 流式响应 - 返回生成器
-                async def stream_generator():
-                    try:
-                        # 立即删除旧消息
-                        manager.delete_message_pair(message_id, current_user["id"])
+        
+        if request.stream:
+            # 流式响应
+            async def stream_generator():
+                new_ai_message = None
+                new_content = ""
+                
+                try:
+                    # 注意：不要在生成器开始时立即删除旧消息
+                    # 先获取所有必要信息
+                    old_message_id = old_ai_message.id
+                    old_message_content = old_ai_message.content
+                    user_message_id = user_message.id
+                    
+                    # 调用AI流式服务
+                    stream_generator = ai_service.stream_chat_completion(
+                        messages=ai_messages,
+                        model=model_to_use,
+                        user_id=current_user["username"]
+                    )
+                    
+                    # 流式生成内容
+                    async for chunk in stream_generator:
+                        yield chunk
                         
-                        # 调用AI流式服务
-                        stream_generator = ai_service.stream_chat_completion(
-                            messages=ai_messages,
-                            model=model_to_use,
-                            user_id=current_user["username"]
-                        )
-                        
-                        new_content = ""
-                        async for chunk in stream_generator:
-                            yield chunk
-                            
-                            # 解析chunk以获取内容
-                            if chunk.startswith("data: "):
-                                try:
-                                    data_str = chunk[6:]  # 移除"data: "前缀
-                                    if data_str.strip():
-                                        data = json.loads(data_str.strip())
-                                        if "content" in data and not data.get("done") and not data.get("error"):
-                                            new_content += data["content"]
-                                except json.JSONDecodeError:
-                                    pass
-                        
+                        # 解析chunk以获取内容
+                        if chunk.startswith("data: "):
+                            try:
+                                data_str = chunk[6:]  # 移除"data: "前缀
+                                if data_str.strip():
+                                    data = json.loads(data_str.strip())
+                                    if "content" in data and not data.get("done") and not data.get("error"):
+                                        new_content += data["content"]
+                            except json.JSONDecodeError:
+                                pass
+                    
+                    # 流式完成后，先创建新消息，再删除旧消息
+                    if new_content:
                         # 创建新的AI消息
                         new_ai_message = models.Message(
                             thread_id=thread_id,
                             role="assistant",
                             content=new_content,
-                            parent_id=user_message.id,
+                            parent_id=user_message_id,
                             model_used=model_to_use,
                             created_at=datetime.utcnow()
                         )
                         db.add(new_ai_message)
                         db.commit()
+                        db.refresh(new_ai_message)
                         
+                        # 只删除AI消息，保留用户消息
+                        success, message, delete_info = manager.delete_ai_message_only(message_id, current_user["id"])
+                        if not success:
+                          logger.error(f"删除旧AI消息失败: {message}")
+                          # 继续执行，因为我们需要创建新消息
+
                         # 更新线程状态
                         thread = db.query(models.Thread).filter(
                             models.Thread.id == thread_id
@@ -925,87 +940,99 @@ async def regenerate_message(
                             thread.updated_at = datetime.utcnow()
                             db.commit()
                         
-                    except Exception as e:
-                        logger.error(f"流式重新生成失败: {str(e)}")
+                        # 发送包含新消息ID的完成消息
+                        message_data = json.dumps({
+                            "content": "",
+                            "done": True,
+                            "message_id": new_ai_message.id,
+                            "user_message_id": user_message_id,
+                            "model_used": model_to_use
+                        })
+                        yield f"data: {message_data}\n\n"
+                    else:
+                        # 没有生成内容，返回错误
                         error_data = json.dumps({
-                            "content": f"重新生成失败: {str(e)}",
+                            "content": "重新生成失败：未生成任何内容",
                             "error": True,
                             "done": True
                         })
                         yield f"data: {error_data}\n\n"
-                
-                return StreamingResponse(
-                    stream_generator(),
-                    media_type="text/event-stream",
-                    headers={
-                        "Cache-Control": "no-cache",
-                        "Connection": "keep-alive",
-                        "X-Accel-Buffering": "no"
-                    }
-                )
-                
-            else:
-                # 非流式响应
-                # 立即删除旧消息
-                manager.delete_message_pair(message_id, current_user["id"])
-                
-                # 调用AI服务
-                ai_response = await ai_service.chat_completion(
-                    messages=ai_messages,
-                    model=model_to_use,
-                    stream=False,
-                    user_id=current_user["username"]
-                )
-                
-                # 创建新的AI消息
-                new_ai_message = models.Message(
-                    thread_id=thread_id,
-                    role="assistant",
-                    content=ai_response["content"],
-                    parent_id=user_message.id,
-                    model_used=ai_response.get("model_used"),
-                    tokens=ai_response.get("tokens"),
-                    created_at=datetime.utcnow()
-                )
-                db.add(new_ai_message)
-                
-                # 更新线程状态
-                thread = db.query(models.Thread).filter(
-                    models.Thread.id == thread_id
-                ).first()
-                if thread:
-                    thread.is_active = True
-                    thread.updated_at = datetime.utcnow()
-                
-                db.commit()
-                db.refresh(new_ai_message)
-                
-                return {
-                    "code": 200,
-                    "message": "消息重新生成成功",
-                    "data": {
-                        "new_message": new_ai_message,
-                        "old_message_id": message_id,
-                        "user_message_id": user_message.id
-                    }
+                        
+                except Exception as e:
+                    logger.error(f"流式重新生成失败: {str(e)}")
+                    error_data = json.dumps({
+                        "content": f"重新生成失败: {str(e)}",
+                        "error": True,
+                        "done": True
+                    })
+                    yield f"data: {error_data}\n\n"
+            
+            return StreamingResponse(
+                stream_generator(),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive",
+                    "X-Accel-Buffering": "no"
                 }
-                
-        except ValueError as e:
-            # 处理Token用量上限错误
-            logger.warning(f"AI服务调用被限制: {str(e)}")
-            raise HTTPException(
-                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail=str(e)
-            )
-        except Exception as ai_error:
-            logger.error(f"AI服务调用失败: {str(ai_error)}")
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"AI服务调用失败: {str(ai_error)}"
             )
             
-    except HTTPException:
-        raise
+        else:
+            # 非流式响应
+            # 先调用AI服务
+            ai_response = await ai_service.chat_completion(
+                messages=ai_messages,
+                model=model_to_use,
+                stream=False,
+                user_id=current_user["username"]
+            )
+            
+            # 创建新的AI消息
+            new_ai_message = models.Message(
+                thread_id=thread_id,
+                role="assistant",
+                content=ai_response["content"],
+                parent_id=user_message.id,
+                model_used=ai_response.get("model_used"),
+                tokens=ai_response.get("tokens"),
+                created_at=datetime.utcnow()
+            )
+            db.add(new_ai_message)
+            
+            # 只删除AI消息，保留用户消息
+            success, message, delete_info = manager.delete_ai_message_only(message_id, current_user["id"])
+            if not success:
+                logger.error(f"删除旧AI消息失败: {message}")
+                # 继续执行，因为我们需要创建新消息
+
+            # 更新线程状态
+            thread = db.query(models.Thread).filter(
+                models.Thread.id == thread_id
+            ).first()
+            if thread:
+                thread.is_active = True
+                thread.updated_at = datetime.utcnow()
+            
+            db.commit()
+            db.refresh(new_ai_message)
+            
+            return {
+                "code": 200,
+                "message": "消息重新生成成功",
+                "data": {
+                    "new_message": new_ai_message,
+                    "old_message_id": message_id,
+                    "user_message_id": user_message.id
+                }
+            }
+            
+    except ValueError as e:
+        # 处理Token用量上限错误
+        logger.warning(f"AI服务调用被限制: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=str(e)
+        )
     except Exception as e:
         db.rollback()
         logger.error(f"重新生成消息失败: {str(e)}")

@@ -546,21 +546,72 @@ const sendMessageStream = async (content: string): Promise<void> => {
   }
 
   // 新增：停止流式生成
-  const stopStreaming = async (): Promise<void> => {
-    if (isStreaming.value && streamingController.value) {
-      try {
-        streamingController.value.abort()
-        await chatApi.stopGeneration()
-        isStreaming.value = false
-        streamingController.value = null
-        console.log('已停止流式生成')
-      } catch (err: unknown) {
-        console.error('停止生成失败:', err)
-        error.value = err instanceof Error ? err.message : '停止生成失败'
+const stopStreaming = async (): Promise<void> => {
+  if (isStreaming.value && streamingController.value) {
+    try {
+      // 1. 中止当前流式请求
+      streamingController.value.abort()
+      
+      // 2. 调用API停止生成
+      await chatApi.stopGeneration()
+      
+      // 3. 重置流式状态
+      isStreaming.value = false
+      streamingController.value = null
+      
+      // 4. 等待一小段时间，让后端处理停止
+      await new Promise(resolve => setTimeout(resolve, 500))
+      
+      // 5. 重新获取消息列表，确保状态一致
+      if (currentThread.value) {
+        await fetchMessages()
+      }
+      
+      // 6. 刷新用量信息
+      await fetchAIUsage()
+      
+      console.log('已停止流式生成')
+      
+    } catch (err: unknown) {
+      console.error('停止生成失败:', err)
+      error.value = err instanceof Error ? err.message : '停止生成失败'
+      
+      // 即使API调用失败，也要重置前端状态
+      isStreaming.value = false
+      streamingController.value = null
+      
+      // 强制重新获取消息
+      if (currentThread.value) {
+        await fetchMessages()
       }
     }
   }
+}
+
+// 在store中添加以下函数
+const validateMessageExists = async (messageId: number): Promise<boolean> => {
+  if (!currentThread.value) return false
   
+  try {
+    // 首先在本地消息列表中查找
+    const localMessage = messages.value.find(msg => msg.id === messageId)
+    if (localMessage) {
+      return true
+    }
+    
+    // 如果本地没有，尝试从服务器获取最新消息列表
+    await fetchMessages()
+    
+    // 再次检查
+    const refreshedMessage = messages.value.find(msg => msg.id === messageId)
+    return !!refreshedMessage
+    
+  } catch (err) {
+    console.error('验证消息存在失败:', err)
+    return false
+  }
+}
+
   // 获取模型显示名称的函数
 const getModelDisplayName = (model: string): string => {
   const modelDisplayNames: Record<string, string> = {
@@ -991,6 +1042,7 @@ const isMessageBranchingPoint = (messageId: number): boolean => {
     clearError,
     deleteMessage,
     isMessageBranchingPoint,
+    validateMessageExists, 
     
     // 新增动作
     fetchAIUsage,

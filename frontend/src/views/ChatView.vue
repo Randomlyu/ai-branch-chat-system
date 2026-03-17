@@ -206,8 +206,8 @@
               <button 
                 class="btn-action regenerate-btn"
                 @click="regenerateMessage(msg.id)"
-                title="重新生成"
-                :disabled="isStreaming"
+                :disabled="!canRegenerateMessage(msg)"
+                :title="getRegenerateButtonTitle(msg)"
               >
                 <svg class="action-icon" viewBox="0 0 24 24" width="16" height="16">
                   <path fill="currentColor" d="M12,5V1L7,6L12,11V7A6,6 0 0,1 18,13A6,6 0 0,1 12,19A6,6 0 0,1 6,13H4A8,8 0 0,0 12,21A8,8 0 0,0 20,13A8,8 0 0,0 12,5Z"/>
@@ -627,6 +627,19 @@ const createBranchFromMessage = async (messageId: number) => {
     return
   }
   
+  // 验证消息是否存在
+  try {
+    const isValid = await validateMessageExists(messageId)
+    if (!isValid) {
+      showToast('消息不存在或已被删除', 'error')
+      return
+    }
+  } catch (error) {
+    console.error('验证消息失败:', error)
+    showToast('验证消息失败，请稍后重试', 'error')
+    return
+  }
+  
   if (currentThread.value?.depth !== undefined && currentThread.value.depth >= 3) {
     showToast('分支深度已达上限（3层），无法创建更深层的分支', 'error')
     return
@@ -672,6 +685,7 @@ const canCreateBranch = (msg: Message) => {
   return msg.id === latestMessage.id
 }
 
+//获取分支按钮标题
 const getBranchButtonTitle = (msg: Message) => {
   if (isStreaming.value) {
     return '请等待生成完成'
@@ -727,6 +741,7 @@ const refreshThreadTree = () => {
 }
 
 // ---------- 消息操作方法 ----------
+//复制消息
 const copyMessage = async (content: string) => {
   try {
     await navigator.clipboard.writeText(content)
@@ -743,37 +758,41 @@ const copyMessage = async (content: string) => {
   }
 }
 
+//重新生成消息
 const regenerateMessage = async (messageId: number) => {
-  if (isStreaming.value) {
-    showToast('请等待当前生成完成', 'error')
+  // 验证消息是否存在
+  try {
+    const isValid = await validateMessageExists(messageId)
+    if (!isValid) {
+      showToast('消息不存在或已被删除', 'error')
+      return
+    }
+  } catch (error) {
+    console.error('验证消息失败:', error)
+    showToast('验证消息失败，请稍后重试', 'error')
+    return
+  }
+  
+  // 找到对应的消息对象
+  const message = messages.value.find(msg => msg.id === messageId)
+  if (!message) {
+    showToast('消息不存在', 'error')
+    return
+  }
+  
+  // 检查是否可以重新生成（这里应该与按钮的验证一致）
+  if (!canRegenerateMessage(message)) {
+    const title = getRegenerateButtonTitle(message)
+    showToast(title, 'error')
+    return
+  }
+  
+  // 确认操作
+  if (!confirm('确定要重新生成此消息吗？')) {
     return
   }
   
   try {
-    // 检查是否是最新消息
-    const messages = chatStore.messages
-    if (messages.length === 0) {
-      showToast('没有可重新生成的消息', 'error')
-      return
-    }
-    
-    const latestMessage = messages[messages.length - 1]
-    if (!latestMessage || latestMessage.id !== messageId) {
-      showToast('只能重新生成最新AI消息', 'error')
-      return
-    }
-    
-    // 检查是否被分支引用
-    if (chatStore.isMessageBranchingPoint(messageId)) {
-      showToast('此消息已被分支引用，无法重新生成', 'error')
-      return
-    }
-    
-    // 确认操作
-    if (!confirm('确定要重新生成此消息吗？')) {
-      return
-    }
-    
     // 调用重新生成
     const result = await chatStore.regenerateMessage(
       chatStore.currentThread?.id!,
@@ -800,13 +819,26 @@ const deleteMessage = async (messageId: number) => {
     return
   }
   
+  // 验证消息是否存在
+  try {
+    const isValid = await validateMessageExists(messageId)
+    if (!isValid) {
+      showToast('消息不存在或已被删除', 'error')
+      return
+    }
+  } catch (error) {
+    console.error('验证消息失败:', error)
+    showToast('验证消息失败，请稍后重试', 'error')
+    return
+  }
+  
   // 检查消息是否被分支引用
   if (isMessageBranchingPoint(messageId)) {
     showToast('此消息已被分支引用，无法删除', 'error')
     return
   }
 
-   // 确认对话框
+  // 确认对话框
   if (!confirm('确定要删除此AI回复及其对应的提问吗？此操作不可撤销。')) {
     return
   }
@@ -821,22 +853,10 @@ const deleteMessage = async (messageId: number) => {
       return
     }
 
-    // 检查要删除的消息是否存在且是AI消息
-    const messageToDelete = messages.value.find(msg => msg.id === messageId)
-    if (!messageToDelete) {
-      showToast('消息不存在', 'error')
-      return
-    }
-    
-    if (messageToDelete.role !== 'assistant') {
-      showToast('只能删除AI消息', 'error')
-      return
-    }
-    
     // 调用store的删除消息方法
     const result = await deleteMessageInStore(currentThread.value.id, messageId)
     
-     if (result.success) {
+    if (result.success) {
       showToast('消息删除成功', 'success')
       console.log('删除详情:', result.data)
       
@@ -851,6 +871,88 @@ const deleteMessage = async (messageId: number) => {
     const errorMsg = error instanceof Error ? error.message : '删除消息失败'
     showToast(errorMsg, 'error')
   }
+}
+
+// 验证消息是否存在
+const validateMessageExists = async (messageId: number): Promise<boolean> => {
+  if (!currentThread.value) {
+    console.warn('验证消息失败：当前没有活跃的线程')
+    return false
+  }
+  
+  try {
+    // 首先在本地消息列表中查找
+    const localMessage = messages.value.find(msg => msg.id === messageId)
+    if (localMessage) {
+      console.log('消息在本地找到:', messageId)
+      return true
+    }
+    
+    // 如果本地没有，尝试从服务器获取最新消息列表
+    console.log('消息不在本地，重新获取消息列表:', messageId)
+    await chatStore.fetchMessages()
+    
+    // 再次检查
+    const refreshedMessage = messages.value.find(msg => msg.id === messageId)
+    if (refreshedMessage) {
+      console.log('消息在重新获取后找到:', messageId)
+      return true
+    }
+    
+    console.warn('消息不存在，即使在重新获取后:', messageId)
+    return false
+    
+  } catch (err) {
+    console.error('验证消息存在失败:', err)
+    return false
+  }
+}
+
+// 检查消息是否可以重新生成
+const canRegenerateMessage = (msg: Message): boolean => {
+  if (isStreaming.value) return false
+  if (msg.role !== 'assistant') return false
+  
+  // 检查是否是最新消息
+  const latestMessage = getLatestMessage()
+  if (!latestMessage || latestMessage.id !== msg.id) {
+    return false
+  }
+  
+  // 检查是否被分支引用
+  if (isMessageBranchingPoint(msg.id)) {
+    return false
+  }
+  
+  return true
+}
+
+// 获取重新生成按钮标题
+const getRegenerateButtonTitle = (msg: Message) => {
+  if (isStreaming.value) {
+    return '请等待生成完成'
+  }
+  
+  if (msg.role !== 'assistant') {
+    return '只能重新生成AI消息'
+  }
+  
+  // 检查是否是最新消息
+  const latestMessage = getLatestMessage()
+  if (!latestMessage) {
+    return '当前没有消息'
+  }
+  
+  if (msg.id !== latestMessage.id) {
+    return '只能重新生成最新AI消息'
+  }
+  
+  // 检查是否被分支引用
+  if (isMessageBranchingPoint(msg.id)) {
+    return '此消息已被分支引用，无法重新生成'
+  }
+  
+  return '重新生成此AI回复'
 }
 
 // ---------- 工具函数 ----------
@@ -2608,4 +2710,22 @@ button:active {
   position: relative;
   width: 100%;
 }
+
+.message-actions .btn-action.regenerate-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  background-color: #f5f5f5;
+  color: #999;
+}
+
+.message-actions .btn-action.regenerate-btn:disabled .action-icon {
+  filter: grayscale(100%);
+}
+
+.message-actions .btn-action.regenerate-btn:disabled:hover {
+  background-color: #f5f5f5;
+  transform: none;
+  box-shadow: none;
+}
+
 </style>

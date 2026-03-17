@@ -244,6 +244,137 @@ class DeletionManager:
         logger.error(f"未知错误 - 删除消息 {ai_message_id}: {str(e)}")
         return False, f"未知错误: {str(e)}", {}
     
+    def delete_ai_message_only(
+        self, 
+        ai_message_id: int, 
+        user_id: Optional[int] = None
+    ) -> Tuple[bool, str, Dict[str, Any]]:
+        """
+        只删除AI消息，保留对应的用户消息
+        
+        用于重新生成功能
+        """
+        try:
+            # 1. 验证AI消息存在
+            ai_message = self.db.query(models.Message).filter(
+                models.Message.id == ai_message_id
+            ).first()
+            
+            if not ai_message:
+                return False, "AI消息不存在", {}
+            
+            # 2. 验证必须是AI消息
+            if ai_message.role != "assistant":
+                return False, "只能删除AI消息", {}
+            
+            # 3. 验证线程存在
+            thread = self.db.query(models.Thread).filter(
+                models.Thread.id == ai_message.thread_id
+            ).first()
+            
+            if not thread:
+                return False, "线程不存在", {}
+            
+            # 4. 验证对话存在和所有权
+            conversation = self.db.query(models.Conversation).filter(
+                models.Conversation.id == thread.conversation_id
+            ).first()
+            
+            if not conversation:
+                return False, "对话不存在", {}
+            
+            if user_id is not None and conversation.user_id != user_id:
+                return False, "无权删除此消息", {}
+            
+            # 5. 检查该消息是否被分支引用
+            thread_refs = self.db.query(models.Thread).filter(
+                models.Thread.parent_message_id == ai_message_id
+            ).count()
+            
+            if thread_refs > 0:
+                return False, "此消息已被分支引用，无法删除", {}
+            
+            # 6. 检查是否是最新消息
+            latest_message = self.db.query(models.Message).filter(
+                models.Message.thread_id == ai_message.thread_id
+            ).order_by(models.Message.created_at.desc()).first()
+            
+            is_latest = latest_message and latest_message.id == ai_message_id
+            
+            # 7. 获取父消息（用户消息）的ID
+            user_message_id = ai_message.parent_id
+            
+            # 8. 获取需要修复的消息ID（在删除前保存）
+            affected_message_ids = [
+                msg.id for msg in self.db.query(models.Message.id).filter(
+                    models.Message.parent_id == ai_message_id
+                ).all()
+            ]
+            
+            # 9. 只删除AI消息，不删除用户消息
+            delete_message_ids = [ai_message.id]  # 注意：只包含AI消息
+            
+            # 10. 先修复消息链：更新受影响消息的parent_id
+            if affected_message_ids:
+                self.db.query(models.Message).filter(
+                    models.Message.id.in_(affected_message_ids)
+                ).update(
+                    {"parent_id": user_message_id},  # 指向用户消息
+                    synchronize_session=False
+                )
+            
+            # 11. 删除AI消息
+            self.db.query(models.Message).filter(
+                models.Message.id.in_(delete_message_ids)
+            ).delete(synchronize_session=False)
+            
+            # 12. 修复分支引用：更新引用被删消息的线程
+            self.db.query(models.Thread).filter(
+                models.Thread.parent_message_id.in_(delete_message_ids)
+            ).update(
+                {"parent_message_id": user_message_id},
+                synchronize_session=False
+            )
+            
+            # 13. 如果删除的是最新消息，更新线程状态
+            if is_latest:
+                # 找到新的最新消息
+                new_latest = self.db.query(models.Message).filter(
+                    models.Message.thread_id == thread.id
+                ).order_by(models.Message.created_at.desc()).first()
+                
+                if new_latest:
+                    # 确保线程活跃状态正确
+                    thread.updated_at = datetime.utcnow()
+                else:
+                    # 没有消息了，但线程仍然存在
+                    thread.is_active = False
+                    thread.updated_at = datetime.utcnow()
+            
+            self.db.commit()
+            
+            # 返回删除详情
+            delete_info = {
+                "deleted_messages": delete_message_ids,  # 只包含AI消息
+                "fixed_messages": affected_message_ids,
+                "connection_point": user_message_id,  # 指向用户消息
+                "is_latest_deleted": is_latest,
+                "user_message_kept": True
+            }
+            
+            logger.info(f"只删除AI消息成功: 删除{len(delete_message_ids)}条消息，修复{len(affected_message_ids)}条消息")
+            return True, "AI消息删除成功，用户消息已保留", delete_info
+            
+        except SQLAlchemyError as e:
+            self.db.rollback()
+            logger.error(f"数据库错误 - 只删除AI消息 {ai_message_id}: {str(e)}")
+            return False, f"数据库错误: {str(e)}", {}
+            
+        except Exception as e:
+            self.db.rollback()
+            logger.error(f"未知错误 - 只删除AI消息 {ai_message_id}: {str(e)}")
+            return False, f"未知错误: {str(e)}", {}
+
     def regenerate_message(
         self, 
         ai_message_id: int, 
