@@ -33,7 +33,6 @@ class Conversation(Base):
         Index('idx_user_updated', 'user_id', 'updated_at'),
     )
 
-
 class Thread(Base):
     __tablename__ = "threads"
     
@@ -48,6 +47,15 @@ class Thread(Base):
     # ===== 新增字段（插入在 updated_at 之后）=====
     depth = Column(Integer, nullable=False, default=0, server_default="0", 
                   comment="分支深度：主分支=0，每分支+1，最大3")
+    
+    # 添加 parent_thread_id 字段
+    parent_thread_id = Column(
+        Integer, 
+        ForeignKey("threads.id"),  # 自引用外键
+        nullable=True,  # 主线程的 parent_thread_id 为 NULL
+        index=True,
+        comment="父线程ID，用于快速判断是否有子线程"
+    )
     # ============================================
 
     # 明确指定外键，避免多路径问题
@@ -56,6 +64,14 @@ class Thread(Base):
     # 不设置级联，由应用层控制
     messages = relationship("Message", back_populates="thread")
     
+    # 添加自引用关系
+    parent_thread = relationship(
+        "Thread", 
+        remote_side=[id],  # 指定远程端是当前表的id字段
+        backref="child_threads",  # 反向引用名称
+        foreign_keys=[parent_thread_id]  # 明确指定外键
+    )
+    
     # 添加验证
     @validates('conversation_id')
     def validate_conversation_id(self, key, conversation_id):
@@ -63,12 +79,26 @@ class Thread(Base):
             raise ValueError("无效的对话ID")
         return conversation_id
     
-    # 复合索引
+    # 深度验证
+    @validates('depth')
+    def validate_depth(self, key, depth):
+        if depth < 0 or depth > 3:
+            raise ValueError("分支深度必须在0-3之间")
+        return depth
+    
+    # 父线程验证
+    @validates('parent_thread_id')
+    def validate_parent_thread_id(self, key, parent_thread_id):
+        if parent_thread_id is not None and parent_thread_id == self.id:
+            raise ValueError("线程不能以自身为父线程")
+        return parent_thread_id
+    
+    # 更新复合索引
     __table_args__ = (
         Index('idx_conversation_active', 'conversation_id', 'is_active'),
         Index('idx_conversation_parent', 'conversation_id', 'parent_message_id'),
+        Index('idx_parent_thread', 'parent_thread_id'),  # 新增索引，优化查询
     )
-
 
 class Message(Base):
     __tablename__ = "messages"

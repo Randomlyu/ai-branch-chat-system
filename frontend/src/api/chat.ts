@@ -10,7 +10,10 @@ import type {
   CreateBranchRequest,
   ApiResponse,
   ThreadUpdate,
-  RegenerateMessageRequest
+  RegenerateMessageRequest,
+  // ===== 新增导入 =====
+  ThreadDeleteInfo
+  // ====================
 } from '@/types/chat'
 
 // 创建axios实例
@@ -223,6 +226,12 @@ export const updateThreadTitle = async (threadId: number, data: ThreadUpdate): P
   return apiClient.put(`/threads/${threadId}`, data)
 }
 
+// ===== 新增：删除线程（仅限叶子节点） =====
+export const deleteThread = async (threadId: number): Promise<ApiResponse<ThreadDeleteInfo>> => {
+  return apiClient.delete(`/threads/${threadId}`)
+}
+// =======================================
+
 export const getConversationThreads = async (conversationId: number): Promise<ApiResponse<Thread[]>> => {
   return apiClient.get(`/conversations/${conversationId}/threads`)
 }
@@ -321,5 +330,8 @@ export default {
   getAvailableModels, // 新增
   createBranch,
   getThreadTree,
-  deleteMessage  // 新增
+  deleteMessage,  // 新增
+  // ===== 新增 =====
+  deleteThread
+  // ===============
 }

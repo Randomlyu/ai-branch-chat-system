@@ -109,6 +109,20 @@
               </svg>
               重命名
             </button>
+            <!-- ===== 新增：删除线程选项 ===== -->
+            <button 
+              class="thread-actions-item thread-actions-item-delete"
+              :class="{ 'disabled': !canDeleteThread }"
+              :disabled="!canDeleteThread"
+              :title="getDeleteTooltip()"
+              @click="onDeleteThread"
+            >
+              <svg class="thread-actions-icon" viewBox="0 0 24 24" width="16" height="16">
+                <path fill="currentColor" d="M19,4H15.5L14.5,3H9.5L8.5,4H5V6H19M6,19A2,2 0 0,0 8,21H16A2,2 0 0,0 18,19V7H6V19Z"/>
+              </svg>
+              删除分支
+            </button>
+            <!-- ================================== -->
           </div>
         </div>
       </div>
@@ -141,6 +155,9 @@ interface ThreadTree {
   created_at?: string
   updated_at?: string
   conversation_id?: number
+  // ===== 新增字段 =====
+  parent_thread_id?: number | null
+  // ====================
 }
 
 const props = defineProps<{
@@ -150,6 +167,9 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   switch: [threadId: number]
+  // ===== 新增事件 =====
+  deleted: [threadId: number, parentThreadId?: number | null]
+  // ====================
 }>()
 
 // 状态
@@ -166,6 +186,18 @@ const renameInputRef = ref<HTMLInputElement>()
 const hasChildren = computed(() => {
   return props.thread.children && props.thread.children.length > 0
 })
+
+// ===== 新增：计算是否可以删除线程 =====
+const canDeleteThread = computed(() => {
+  // 条件1：不能是主线程（depth=0）
+  if (props.thread.depth === 0) return false
+  
+  // 条件2：必须是叶子节点（没有子线程）
+  if (hasChildren.value) return false
+  
+  return true
+})
+// ====================================
 
 // 菜单按钮显示条件
 const showMenuButton = computed(() => {
@@ -236,6 +268,18 @@ const getDepthTooltip = (depth?: number) => {
   
   return `${name}（还可创建${3 - depth}层分支）`
 }
+
+// ===== 新增：获取删除按钮的工具提示 =====
+const getDeleteTooltip = () => {
+  if (props.thread.depth === 0) {
+    return '主线程不能删除'
+  }
+  if (hasChildren.value) {
+    return '此分支包含子分支，无法删除'
+  }
+  return '删除此分支'
+}
+// ==========================================
 
 const getThreadTooltip = (thread: ThreadTree) => {
   const parts: string[] = []
@@ -336,6 +380,51 @@ const onInputBlur = (event: FocusEvent) => {
     }
   }, 100)
 }
+
+// ===== 新增：删除线程 =====
+const onDeleteThread = async (event: MouseEvent) => {
+  event.stopPropagation()
+  
+  // 再次验证是否可以删除
+  if (!canDeleteThread.value) {
+    let message = ''
+    if (props.thread.depth === 0) {
+      message = '主线程不能删除'
+    } else if (hasChildren.value) {
+      message = '此分支包含子分支，无法删除'
+    }
+    alert(message)
+    isMenuVisible.value = false
+    return
+  }
+  
+  // 确认删除
+  const threadTitle = props.thread.title || getThreadTitle(props.thread)
+  if (!confirm(`确定要删除分支 "${threadTitle}" 吗？此操作不可撤销。`)) {
+    isMenuVisible.value = false
+    return
+  }
+  
+  try {
+    const chatStore = useChatStore()
+    const result = await chatStore.deleteThread(props.thread.id)
+    
+    if (result.success) {
+      // 删除成功，发出删除事件
+      emit('deleted', props.thread.id, props.thread.parent_thread_id)
+      isMenuVisible.value = false
+    } else {
+      // 删除失败，显示错误
+      alert(result.error || '删除分支失败')
+    }
+  } catch (error) {
+    console.error('删除分支失败:', error)
+    alert('删除分支失败，请重试')
+  } finally {
+    isMenuVisible.value = false
+  }
+}
+// ===============================
 
 // 监听全局点击
 const handleClickOutside = (event: MouseEvent) => {
@@ -740,5 +829,84 @@ onBeforeUnmount(() => {
     opacity: 1;
     transform: translateY(0);
   }
+}
+
+.thread-children {
+  margin-left: 4px; /* 减少子节点缩进 */
+  animation: slideDown 0.3s ease;
+}
+
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-5px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* ===== 新增：删除按钮特殊样式 ===== */
+.thread-actions-item-delete {
+  color: #dc2626; /* 红色文字 */
+  position: relative;
+  overflow: hidden;
+}
+
+.thread-actions-item-delete:before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: currentColor;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  pointer-events: none;
+}
+
+.thread-actions-item-delete:hover:not(.disabled) {
+  background-color: #fef2f2; /* 浅红色背景 */
+  color: #b91c1c; /* 深红色文字 */
+}
+
+.thread-actions-item-delete:hover:not(.disabled):before {
+  opacity: 0.1;
+}
+
+.thread-actions-item-delete.disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  color: #9ca3af; /* 灰色文字 */
+  position: relative;
+  background: none !important;
+}
+
+.thread-actions-item-delete.disabled::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: transparent;
+  cursor: not-allowed;
+  z-index: 1;
+}
+
+.thread-actions-item-delete.disabled:hover {
+  background-color: transparent !important;
+  color: #9ca3af !important;
+}
+
+/* 删除图标特殊样式 */
+.thread-actions-item-delete .thread-actions-icon {
+  transition: transform 0.2s ease;
+}
+
+.thread-actions-item-delete:not(.disabled):hover .thread-actions-icon {
+  transform: scale(1.1);
 }
 </style>

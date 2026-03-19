@@ -11,7 +11,8 @@ import type {
   StreamResponseData,
   AIUsageInfo,
   ModelsResponse,
-  DeleteMessageResponse
+  DeleteMessageResponse,
+  ThreadDeleteInfo
 } from '@/types/chat'
 import * as chatApi from '@/api/chat'
 
@@ -928,6 +929,100 @@ const regenerateMessage = async (
   }
 }
 
+// ===== 新增：删除线程（仅限叶子节点） =====
+const deleteThread = async (threadId: number): Promise<{
+  success: boolean;
+  error?: string;
+  data?: ThreadDeleteInfo;
+  newActiveThreadId?: number;  // 删除当前线程后新的活跃线程ID
+}> => {
+  try {
+    isLoading.value = true
+    const response = await chatApi.deleteThread(threadId)
+    
+    if (response.code === 200) {
+      const deleteInfo = response.data
+      
+      // 1. 从本地线程树中移除被删除的线程
+      const removeThreadFromTree = (tree: ThreadTree[], targetId: number): ThreadTree[] => {
+        return tree.filter(node => {
+          if (node.id === targetId) {
+            return false
+          }
+          if (node.children && node.children.length > 0) {
+            node.children = removeThreadFromTree(node.children, targetId)
+          }
+          return true
+        })
+      }
+      
+      threadTree.value = removeThreadFromTree(threadTree.value, threadId)
+      
+      // 2. 处理当前线程状态
+      let newActiveThreadId: number | undefined
+      
+      if (currentThread.value?.id === threadId) {
+        // 如果删除的是当前正在查看的线程
+        if (deleteInfo.parent_thread_id) {
+          // 如果有父线程，切换到父线程
+          newActiveThreadId = deleteInfo.parent_thread_id
+        } else {
+          // 如果没有父线程，找到对话的主线程
+          const findRootThread = (tree: ThreadTree[]): ThreadTree | null => {
+            for (const node of tree) {
+              if (node.depth === 0) {
+                return node
+              }
+              if (node.children && node.children.length > 0) {
+                const result = findRootThread(node.children)
+                if (result) return result
+              }
+            }
+            return null
+          }
+          
+          const rootThread = findRootThread(threadTree.value)
+          if (rootThread) {
+            newActiveThreadId = rootThread.id
+          }
+        }
+        
+        // 切换到新线程
+        if (newActiveThreadId) {
+          await switchThread(newActiveThreadId)
+        } else {
+          // 没有其他线程了，清空当前线程和消息
+          currentThread.value = null
+          messages.value = []
+        }
+      }
+      
+      // 3. 从对话的线程列表中移除（如果需要的话）
+      // 注意：我们没有在store中存储对话的所有线程列表，所以跳过
+      
+      error.value = null
+      return { 
+        success: true, 
+        data: deleteInfo,
+        newActiveThreadId
+      }
+    } else {
+      error.value = response.message || '删除线程失败'
+      return { success: false, error: response.message }
+    }
+  } catch (err: unknown) {
+    console.error('删除线程失败:', err)
+    error.value = err instanceof Error ? err.message : '删除线程失败'
+    return { 
+      success: false, 
+      error: err instanceof Error ? err.message : '删除线程失败' 
+    }
+  } finally {
+    isLoading.value = false
+  }
+}
+// ========================================
+
 // 检查消息是否被分支引用
 const isMessageBranchingPoint = (messageId: number): boolean => {
   if (!threadTree.value || threadTree.value.length === 0) {
@@ -1048,6 +1143,7 @@ const isMessageBranchingPoint = (messageId: number): boolean => {
     fetchAIUsage,
     fetchAvailableModels,
     setCurrentModel,
-    initialize
+    initialize,
+     deleteThread
   }
 })

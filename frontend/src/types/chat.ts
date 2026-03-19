@@ -15,7 +15,10 @@ export interface Thread {
   is_active: boolean
   created_at: string
   updated_at: string
-  depth: number 
+  depth: number
+  // ===== 新增字段 =====
+  parent_thread_id?: number | null
+  // ====================
 }
 
 export interface Message {
@@ -72,10 +75,13 @@ export interface ThreadTree {
   conversation_id: number
   parent_message_id?: number
   title?: string
-  depth: number 
+  depth: number
   is_active: boolean
   created_at: string
   updated_at: string
+  // ===== 新增字段 =====
+  parent_thread_id?: number | null
+  // ====================
   children?: ThreadTree[]
 }
 
@@ -135,3 +141,19 @@ export interface RegenerateMessageResponse {
     user_message_id: number
   }
 }
+
+// ===== 新增：删除线程相关的类型 =====
+export type DeleteThreadRequest = Record<string, never>  // 表示空对象，而不是空接口
+
+export interface ThreadDeleteInfo {
+  deleted_thread_id: number
+  deleted_message_ids: number[]
+  parent_thread_id?: number | null
+}
+
+export interface DeleteThreadResponse {
+  code: number
+  message: string
+  data?: ThreadDeleteInfo
+}
+// ===================================

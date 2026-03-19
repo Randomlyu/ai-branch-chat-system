@@ -1,5 +1,5 @@
 from typing import Optional, List, Dict, Any
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from datetime import datetime
 
 class ThreadUpdate(BaseModel):
@@ -31,9 +31,15 @@ class ThreadBase(BaseModel):
     parent_message_id: Optional[int] = None
     title: Optional[str] = None
     is_active: bool = False
-    # ===== 新增字段（插入在 is_active 之后）=====
-    depth: int = 0  # 分支深度：主分支=0，每分支+1
-    # ============================================
+    depth: int = Field(default=0, description="分支深度：主分支=0，每分支+1，最大3")
+    
+    # ===== 新增字段 =====
+    parent_thread_id: Optional[int] = Field(
+        default=None, 
+        description="父线程ID，用于快速判断是否有子线程，主线程为None"
+    )
+    # ==================
+
 
 class ThreadCreate(ThreadBase):
     pass
@@ -43,6 +49,9 @@ class Thread(ThreadBase):
     id: int
     created_at: datetime
     updated_at: datetime
+    
+    # 可选的子线程列表（用于API响应，便于前端构建树）
+    child_threads: Optional[List["Thread"]] = None
     
     model_config = ConfigDict(from_attributes=True)
 
@@ -88,6 +97,28 @@ class CreateBranchRequest(BaseModel):
     parent_message_id: int
     new_message_content: Optional[str] = None
 
+
+# ===== 新增：删除线程请求/响应模型 =====
+class DeleteThreadRequest(BaseModel):
+    """删除线程请求模型"""
+    pass
+
+
+class DeleteThreadResponse(BaseModel):
+    """删除线程响应模型"""
+    code: int
+    message: str
+    data: Optional[Dict[str, Any]] = None
+
+
+class ThreadDeleteInfo(BaseModel):
+    """线程删除详情"""
+    deleted_thread_id: int
+    deleted_message_ids: List[int]
+    parent_thread_id: Optional[int] = None
+    # ============================================
+
+
 class DeleteMessageRequest(BaseModel):
     """删除消息请求模型"""
     pass
@@ -106,6 +137,7 @@ class MessageDeleteInfo(BaseModel):
     fixed_messages: List[int]
     connection_point: Optional[int] = None
     is_latest_deleted: bool
+
 
 class RegenerateMessageRequest(BaseModel):
     """重新生成消息请求模型"""

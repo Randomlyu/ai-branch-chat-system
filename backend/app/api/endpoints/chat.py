@@ -1189,7 +1189,10 @@ async def create_branch(
             is_active=True,
             created_at=datetime.utcnow(),
             updated_at=datetime.utcnow(),
-            depth=parent_thread.depth + 1  # ===== 核心：继承父深度+1 =====
+            depth=parent_thread.depth + 1,  # ===== 核心：继承父深度+1 =====
+            # ===== 新增：设置父线程ID =====
+            parent_thread_id=parent_thread.id
+            # ============================
         )
         db.add(new_thread)
         db.commit()
@@ -1246,3 +1249,116 @@ async def create_branch(
         db.rollback()
         logger.error(f"创建分支失败: {str(e)}")
         raise HTTPException(status_code=500, detail=f"创建分支失败: {str(e)}")
+
+# ==================== 线程删除端点 ====================
+
+@router.delete("/threads/{thread_id}", response_model=schemas.DeleteThreadResponse)
+def delete_thread(
+    thread_id: int,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    删除叶子线程
+    规则：1. 必须是叶子节点（没有子线程） 2. 不能是主线程（depth != 0）
+    """
+    try:
+        # 1. 验证线程存在
+        thread = db.query(models.Thread).filter(
+            models.Thread.id == thread_id
+        ).first()
+        
+        if not thread:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="线程不存在"
+            )
+        
+        # 2. 验证对话所有权
+        conversation = db.query(models.Conversation).filter(
+            models.Conversation.id == thread.conversation_id
+        ).first()
+        
+        if not conversation:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="对话不存在"
+            )
+        
+        if conversation.user_id != current_user["id"]:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="无权删除此线程"
+            )
+        
+        # 3. 检查是否是主线程（depth=0不允许删除）
+        if thread.depth == 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="主线程不允许删除"
+            )
+        
+        # 4. 检查是否是叶子节点（是否有子线程）
+        has_children = db.query(models.Thread).filter(
+            models.Thread.parent_thread_id == thread_id
+        ).first()
+        
+        if has_children:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="此线程包含子线程，无法删除。请先删除所有子线程。"
+            )
+        
+        # 5. 获取线程的所有消息ID（用于返回给前端）
+        message_ids = [
+            msg.id for msg in 
+            db.query(models.Message.id)
+            .filter(models.Message.thread_id == thread_id)
+            .all()
+        ]
+        
+        # 6. 删除线程的所有消息
+        db.query(models.Message).filter(
+            models.Message.thread_id == thread_id
+        ).delete(synchronize_session=False)
+        
+        # 7. 如果删除的是活跃线程，需要设置新的活跃线程
+        if thread.is_active:
+            # 查找同一对话中的其他线程
+            other_thread = db.query(models.Thread).filter(
+                models.Thread.conversation_id == thread.conversation_id,
+                models.Thread.id != thread_id
+            ).order_by(models.Thread.created_at.asc()).first()
+            
+            if other_thread:
+                other_thread.is_active = True
+                other_thread.updated_at = datetime.utcnow()
+            else:
+                # 如果没有其他线程，将对话标记为无活跃线程
+                # 这应该不会发生，因为主线程还在
+                pass
+        
+        # 8. 删除线程
+        db.delete(thread)
+        db.commit()
+        
+        # 9. 返回成功响应
+        return {
+            "code": 200,
+            "message": "线程删除成功",
+            "data": {
+                "deleted_thread_id": thread_id,
+                "deleted_message_ids": message_ids,
+                "parent_thread_id": thread.parent_thread_id
+            }
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(f"删除线程失败: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"删除线程失败: {str(e)}"
+        )

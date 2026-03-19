@@ -358,6 +358,7 @@
           :thread="thread"
           :current-thread-id="currentThread?.id"
           @switch="switchThread"
+          @deleted="onThreadDeleted"
         />
       </div>
     </aside>
@@ -738,6 +739,13 @@ const refreshThreadTree = () => {
     return
   }
   chatStore.fetchThreadTree()
+}
+
+const onThreadDeleted = async (threadId: number, parentThreadId?: number | null) => {
+  console.log(`线程 ${threadId} 已被删除，父线程ID: ${parentThreadId}`)
+  // 可以在这里重新获取线程树或进行其他状态更新
+  const chatStore = useChatStore()
+  await chatStore.fetchThreadTree()  // 重新获取线程树
 }
 
 // ---------- 消息操作方法 ----------
