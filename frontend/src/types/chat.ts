@@ -21,6 +21,19 @@ export interface Thread {
   // ====================
 }
 
+// 在现有的类型定义中添加
+export interface ThreadPath {
+  id: number
+  title?: string
+  depth?: number
+  // 根据实际需要添加其他字段
+  created_at?: string
+  updated_at?: string
+  conversation_id?: number
+  parent_thread_id?: number | null
+  is_active?: boolean
+}
+
 export interface Message {
   id: number
   thread_id: number
