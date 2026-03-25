@@ -1,23 +1,11 @@
 <template>
   <div class="chat-container">
-    
-    <!-- Toast提示 -->
-    <div v-if="toast.show" class="toast" :class="toast.type">
-        {{ toast.message }}
-    </div>
-
-    <!-- 删除确认对话框 -->
-    <div v-if="showDeleteConfirm" class="modal-overlay">
-      <div class="modal-content">
-        <h3>确认删除</h3>
-        <p>确定要删除对话 "{{ deletingConversationTitle }}" 吗？此操作不可恢复。</p>
-        <div class="modal-actions">
-          <button class="btn-cancel" @click="cancelDelete">取消</button>
-          <button class="btn-delete" @click="confirmDelete">删除</button>
-        </div>
-      </div>
-    </div>
-
+    <!-- 使用新的 Toast 组件 -->
+    <AppToast
+      v-model:visible="toast.show"
+      :message="toast.message"
+      :type="toast.type"
+    />
     <!-- 对话菜单（Teleport到body，避免层级问题） -->
     <Teleport to="body">
       <div 
@@ -42,6 +30,54 @@
         </div>
       </div>
     </Teleport>
+
+    <!-- 删除确认对话框 -->
+    <ConfirmDialog
+      v-model:visible="showDeleteConfirm"
+      title="确认删除"
+      :message="`确定要删除对话 ${deletingConversationTitle} 吗？此操作不可恢复。`"
+      confirm-text="删除"
+      cancel-text="取消"
+      danger
+      icon="warning"
+      @confirm="confirmDelete"
+      @cancel="cancelDelete"
+    />
+    <!-- 删除消息确认对话框 -->
+    <ConfirmDialog
+      v-model:visible="showDeleteMessageConfirm"
+      title="确认删除"
+      message="确定要删除此AI回复及其对应的提问吗？此操作不可撤销。"
+      confirm-text="删除"
+      cancel-text="取消"
+      :danger="true"
+      icon="warning"
+      @confirm="confirmDeleteMessage"
+      @cancel="cancelDeleteMessage"
+    />
+    <!-- 重新生成消息确认对话框 -->
+    <ConfirmDialog
+      v-model:visible="showRegenerateConfirm"
+      title="确认重新生成"
+      message="确定要重新生成此消息吗？原来的回复将被替换。"
+      confirm-text="重新生成"
+      cancel-text="取消"
+      icon="info"
+      @confirm="confirmRegenerateMessage"
+      @cancel="cancelRegenerateMessage"
+    />
+<!-- 删除线程确认对话框 -->
+<ConfirmDialog
+  v-model:visible="showDeleteThreadConfirm"
+  title="确认删除分支"
+  :message="`确定要删除此子分支吗？此操作不可恢复。`"
+  confirm-text="删除"
+  cancel-text="取消"
+  danger
+  icon="warning"
+  @confirm="confirmDeleteThread"
+  @cancel="cancelDeleteThread"
+/>
 
     <!-- 左侧边栏：对话列表 -->
     <ConversationSidebar
@@ -81,6 +117,11 @@
         :is-loading="isLoading"
         :streaming-model="streamingModel"
         :is-message-branching-point="isMessageBranchingPoint"
+        :can-regenerate-message="chatStore.validateMessageForRegeneration"
+        :get-regenerate-button-title="(msg: Message) => chatStore.getMessageActionTitles(msg).regenerate"
+        :can-create-branch="chatStore.validateMessageForBranching"
+        :get-branch-button-title="(msg: Message) => chatStore.getMessageActionTitles(msg).branch"
+        :get-delete-button-title="(msg: Message) => chatStore.getMessageActionTitles(msg).delete"
         @copy="copyMessage"
         @regenerate="regenerateMessage"
         @branch="createBranchFromMessage"
@@ -109,7 +150,6 @@
         @stop="stopGenerating"
         ref="messageInputRef"
       />
-         
     </main>
 
     <!-- 右侧边栏：分支树 -->
@@ -122,6 +162,7 @@
       @toggle-collapse="toggleRightSidebar"
       @switch="switchThread"
       @thread-deleted="onThreadDeleted"
+      @request-delete-thread="handleRequestDeleteThread"
     />
   </div>
 </template>
@@ -131,13 +172,17 @@ import { ref, onMounted, nextTick, watch, computed, onBeforeUnmount } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useChatStore } from '@/stores/chat'
 import type { Conversation, Message } from '@/types/chat'
-// 导入侧边栏组件
+//导入toast组件
+import AppToast from '@/components/AppToast.vue'
+// 导入组件
 import ConversationSidebar from '@/components/ConversationSidebar.vue'
 import ThreadTreeSidebar from '@/components/ThreadTreeSidebar.vue'
 // 导入头部组件
 import ChatHeader from '@/components/ChatHeader.vue'
 //导入聊天组件
-import ChatMessages from '@/components/ChatMessages.vue'  // 新增
+import ChatMessages from '@/components/ChatMessages.vue'
+// 导入对话框组件
+import ConfirmDialog from '@/components/ConfirmDialog.vue'
 // 导入工具函数
 import { 
   formatNumber, 
@@ -171,38 +216,44 @@ const {
   isTokenLimitReached
 } = storeToRefs(chatStore)
 
-const {
-  deleteMessage: deleteMessageInStore,
-  isMessageBranchingPoint
-} = chatStore
-
 // ---------- 本地响应式数据 ----------
 const userInput = ref('')
 const messageInputRef = ref<InstanceType<typeof MessageInput>>()
 const conversationSidebarRef = ref<InstanceType<typeof ConversationSidebar>>()
-const chatMessagesRef = ref<InstanceType<typeof ChatMessages>>()  // 新增
-const streamingEnabled = ref(true) // 默认启用流式
+const chatMessagesRef = ref<InstanceType<typeof ChatMessages>>()
+const streamingEnabled = ref(true)
 const isRightSidebarCollapsed = ref(false)
 const isLeftSidebarCollapsed = ref(false)
-
-// 对话菜单状态
-const conversationMenu = ref({
-  visible: false,
-  conversation: null as Conversation | null,
-  position: {
-    top: '0px',
-    left: '0px'
-  }
-})
 
 // ---------- 删除对话相关状态 ----------
 const showDeleteConfirm = ref(false)
 const deletingConversationId = ref<number | null>(null)
 const deletingConversationTitle = ref('')
 
+// ---------- 删除消息确认对话框状态 ----------
+const showDeleteMessageConfirm = ref(false)
+const deletingMessageId = ref<number | null>(null)
+
+// ---------- 重新生成消息确认对话框状态 ----------
+const showRegenerateConfirm = ref(false)
+const regeneratingMessageId = ref<number | null>(null)
+
+// ---------- 删除线程确认对话框状态 ----------
+const showDeleteThreadConfirm = ref(false)
+const deletingThreadInfo = ref<{
+  threadId: number | null
+  threadTitle: string
+  canDelete: boolean
+  reason?: string
+}>({
+  threadId: null,
+  threadTitle: '',
+  canDelete: true
+})
+
 // ---------- 计算属性 ----------
 const canSendMessage = computed(() => {
-  return !!userInput.value.trim() && !isLoading.value && !isTokenLimitReached.value
+  return chatStore.canSendMessage(userInput.value)
 })
 
 const isMockModeAvailable = computed(() => {
@@ -219,12 +270,21 @@ const toggleLeftSidebar = () => {
 }
 
 // ---------- 对话列表方法 ----------
+// 对话菜单状态
+const conversationMenu = ref({
+  visible: false,
+  conversation: null as Conversation | null,
+  position: {
+    top: '0px',
+    left: '0px'
+  }
+})
+
 // 显示对话菜单
 const showConversationMenu = (conversation: Conversation, event: MouseEvent) => {
   event.stopPropagation()
   event.preventDefault()
   
-  // 计算菜单位置（在点击位置显示）
   const x = event.clientX
   const y = event.clientY
   
@@ -256,7 +316,6 @@ const handleRenameClick = () => {
     return
   }
   
-  // 调用 ConversationSidebar 组件的方法开始编辑标题
   conversationSidebarRef.value?.startEditingTitle(conversation)
 }
 
@@ -282,7 +341,6 @@ const handleClickOutside = (event: MouseEvent) => {
 
 // 对话点击处理
 const handleConversationClick = async (convId: number) => {
-  // 如果菜单打开，不切换对话
   if (conversationMenu.value.visible) {
     hideConversationMenu()
     return
@@ -298,6 +356,15 @@ const createNewConversation = async () => {
   scrollToBottom()
 }
 
+// 保存对话标题
+const saveConversationTitle = async (conversationId: number, title: string) => {
+  try {
+    await chatStore.updateConversationTitle(conversationId, title)
+  } catch (error) {
+    console.error('更新标题失败:', error)
+  }
+}
+
 // 处理删除对话
 const handleDeleteConversation = (conversationId: number) => {
   if (isStreaming.value) {
@@ -309,15 +376,6 @@ const handleDeleteConversation = (conversationId: number) => {
   const conversation = conversations.value.find(c => c.id === conversationId)
   deletingConversationTitle.value = conversation?.title || ''
   showDeleteConfirm.value = true
-}
-
-// 保存对话标题
-const saveConversationTitle = async (conversationId: number, title: string) => {
-  try {
-    await chatStore.updateConversationTitle(conversationId, title)
-  } catch (error) {
-    console.error('更新标题失败:', error)
-  }
 }
 
 // ---------- 删除对话方法 ----------
@@ -347,18 +405,14 @@ const sendMessage = async () => {
 
   try {
     if (streamingEnabled.value) {
-      // 使用流式发送
       await chatStore.sendMessageStream(text)
     } else {
-      // 使用非流式发送
       await chatStore.sendMessage(text)
     }
     
     userInput.value = ''
-    // 等待DOM更新后滚动到底部
     nextTick(() => {
       scrollToBottom()
-      // 聚焦输入框
       messageInputRef.value?.focusInput()
     })
   } catch (error) {
@@ -368,29 +422,11 @@ const sendMessage = async () => {
 
 // ---------- 输入相关方法 ----------
 const getInputPlaceholder = (): string => {
-  if (isTokenLimitReached.value) {
-    return '当日API用量已达上限，请明日再试'
-  }
-  if (isStreaming.value) {
-    return 'AI正在生成，请稍后...'
-  }
-  return '发送消息给AI... (Shift+Enter换行，Enter发送)'
+  return chatStore.getInputPlaceholder()
 }
 
 const getSendButtonTitle = (): string => {
-  if (isTokenLimitReached.value) {
-    return '用量已达上限'
-  }
-  if (isStreaming.value) {
-    return '停止生成'
-  }
-  if (!userInput.value.trim()) {
-    return '请输入消息'
-  }
-  if (streamingEnabled.value) {
-    return '发送消息（流式）'
-  }
-  return '发送消息'
+  return chatStore.getSendButtonTitle(userInput.value, streamingEnabled.value)
 }
 
 // 停止生成
@@ -405,12 +441,6 @@ const onModelChange = () => {
 }
 
 // ---------- 分支相关方法 ----------
-const getLatestMessage = (): Message | null => {
-  if (messages.value.length === 0) return null
-  const latest = messages.value[messages.value.length - 1]
-  return latest || null
-}
-
 const createBranchFromMessage = async (messageId: number) => {
   if (isStreaming.value) {
     showToast('请等待当前生成完成', 'error')
@@ -435,18 +465,18 @@ const createBranchFromMessage = async (messageId: number) => {
     return
   }
   
-  const latestMessage = getLatestMessage()
-  if (!latestMessage) {
+  // 使用 store 中的最新消息
+  if (!chatStore.latestMessage) {
     showToast('当前没有消息，无法创建分支', 'error')
     return
   }
   
-  if (messageId !== latestMessage.id) {
+  if (messageId !== chatStore.latestMessage.id) {
     showToast('只能在最新消息处创建分支', 'error')
     return
   }
   
-  if (latestMessage.role !== 'assistant') {
+  if (chatStore.latestMessage.role !== 'assistant') {
     showToast('只能在AI回复处创建分支', 'error')
     return
   }
@@ -483,26 +513,91 @@ const refreshThreadTree = () => {
 
 const onThreadDeleted = async (threadId: number, parentThreadId?: number | null) => {
   console.log(`线程 ${threadId} 已被删除，父线程ID: ${parentThreadId}`)
-  // 可以在这里重新获取线程树或进行其他状态更新
-  const chatStore = useChatStore()
-  await chatStore.fetchThreadTree()  // 重新获取线程树
+  await chatStore.fetchThreadTree()
+}
+
+// 处理删除线程请求
+const handleRequestDeleteThread = (payload: { 
+  threadId: number; 
+  threadTitle: string;
+  canDelete?: boolean;
+  reason?: string;
+}) => {
+  if (isStreaming.value) {
+    showToast('请等待生成完成后再删除线程', 'error')
+    return
+  }
+  
+  // 如果不能删除，直接显示原因
+  if (payload.canDelete === false && payload.reason) {
+    showToast(payload.reason, 'error')
+    return
+  }
+  
+  // 设置删除信息
+  deletingThreadInfo.value = {
+    threadId: payload.threadId,
+    threadTitle: payload.threadTitle,
+    canDelete: payload.canDelete ?? true,
+    reason: payload.reason
+  }
+  
+  // 显示确认对话框
+  showDeleteThreadConfirm.value = true
+}
+
+// 确认删除线程
+const confirmDeleteThread = async () => {
+  if (deletingThreadInfo.value.threadId === null) {
+    return
+  }
+  
+  try {
+    const result = await chatStore.deleteThread(deletingThreadInfo.value.threadId)
+    
+    if (result.success) {
+      showToast('线程删除成功', 'success')
+      // 重新获取线程树
+      await chatStore.fetchThreadTree()
+      
+      // 如果删除的是当前线程，store 应该已经处理了切换
+      if (result.newActiveThreadId) {
+        showToast(`已切换到新的线程`, 'success')
+      }
+    } else {
+      showToast(result.error || '删除线程失败', 'error')
+    }
+  } catch (error) {
+    console.error('删除线程失败:', error)
+    showToast('删除线程失败', 'error')
+  } finally {
+    cancelDeleteThread()
+  }
+}
+
+// 取消删除线程
+const cancelDeleteThread = () => {
+  showDeleteThreadConfirm.value = false
+  deletingThreadInfo.value = {
+    threadId: null,
+    threadTitle: '',
+    canDelete: true
+  }
 }
 
 // ---------- 消息操作方法 ----------
+// 包装 isMessageBranchingPoint 方法用于传递给子组件
+const isMessageBranchingPoint = (messageId: number): boolean => {
+  return chatStore.isMessageBranchingPoint(messageId)
+}
+
 //复制消息
 const copyMessage = async (content: string) => {
-  try {
-    await navigator.clipboard.writeText(content)
+  const success = await chatStore.copyToClipboard(content)
+  if (success) {
     showToast('消息已复制到剪贴板')
-  } catch (err) {
-    console.error('复制失败:', err)
-    const textArea = document.createElement('textarea')
-    textArea.value = content
-    document.body.appendChild(textArea)
-    textArea.select()
-    document.execCommand('copy')
-    document.body.removeChild(textArea)
-    showToast('消息已复制到剪贴板')
+  } else {
+    showToast('复制失败，请重试', 'error')
   }
 }
 
@@ -521,32 +616,36 @@ const regenerateMessage = async (messageId: number) => {
     return
   }
   
-  // 找到对应的消息对象
   const message = messages.value.find(msg => msg.id === messageId)
   if (!message) {
     showToast('消息不存在', 'error')
     return
   }
   
-  // 检查是否可以重新生成（这里应该与按钮的验证一致）
-  if (!canRegenerateMessage(message)) {
-    const title = getRegenerateButtonTitle(message)
-    showToast(title, 'error')
+  // 使用 store 的验证方法
+  const validation = chatStore.validateMessageOperation(messageId, 'regenerate')
+  if (!validation.can) {
+    showToast(validation.reason || '无法重新生成', 'error')
     return
   }
   
-  // 确认操作
-  if (!confirm('确定要重新生成此消息吗？')) {
+  // 设置要重新生成的消息ID，并显示确认对话框
+  regeneratingMessageId.value = messageId
+  showRegenerateConfirm.value = true
+}
+
+// 确认重新生成消息
+const confirmRegenerateMessage = async () => {
+  if (regeneratingMessageId.value === null) {
     return
   }
   
   try {
-    // 调用重新生成
     const result = await chatStore.regenerateMessage(
       chatStore.currentThread?.id!,
-      messageId,
+      regeneratingMessageId.value,
       chatStore.currentModel,
-      true  // 默认使用流式
+      true
     )
     
     if (result.success) {
@@ -557,10 +656,20 @@ const regenerateMessage = async (messageId: number) => {
   } catch (error) {
     console.error('重新生成失败:', error)
     showToast('重新生成失败', 'error')
+  } finally {
+    // 重置状态
+    showRegenerateConfirm.value = false
+    regeneratingMessageId.value = null
   }
 }
 
-// 新增：删除消息
+// 取消重新生成消息
+const cancelRegenerateMessage = () => {
+  showRegenerateConfirm.value = false
+  regeneratingMessageId.value = null
+}
+
+// 删除消息
 const deleteMessage = async (messageId: number) => {
   if (isStreaming.value) {
     showToast('请等待当前生成完成', 'error')
@@ -580,45 +689,14 @@ const deleteMessage = async (messageId: number) => {
     return
   }
   
-  // 检查消息是否被分支引用
-  if (isMessageBranchingPoint(messageId)) {
+  if (chatStore.isMessageBranchingPoint(messageId)) {
     showToast('此消息已被分支引用，无法删除', 'error')
     return
   }
 
-  // 确认对话框
-  if (!confirm('确定要删除此AI回复及其对应的提问吗？此操作不可撤销。')) {
-    return
-  }
-  
-  try {
-    // 记录要删除的消息ID，便于后续调试
-    console.log('尝试删除消息，ID:', messageId)
-    
-    // 检查当前线程
-    if (!currentThread.value) {
-      showToast('当前没有活跃的线程', 'error')
-      return
-    }
-
-    // 调用store的删除消息方法
-    const result = await deleteMessageInStore(currentThread.value.id, messageId)
-    
-    if (result.success) {
-      showToast('消息删除成功', 'success')
-      console.log('删除详情:', result.data)
-      
-      // 滚动到底部
-      scrollToBottom()
-    } else {
-      showToast(result.error || '删除失败', 'error')
-    }
-    
-  } catch (error) {
-    console.error('删除消息失败:', error)
-    const errorMsg = error instanceof Error ? error.message : '删除消息失败'
-    showToast(errorMsg, 'error')
-  }
+  // 设置要删除的消息ID，并显示确认对话框
+  deletingMessageId.value = messageId
+  showDeleteMessageConfirm.value = true
 }
 
 // 验证消息是否存在
@@ -629,78 +707,56 @@ const validateMessageExists = async (messageId: number): Promise<boolean> => {
   }
   
   try {
-    // 首先在本地消息列表中查找
     const localMessage = messages.value.find(msg => msg.id === messageId)
     if (localMessage) {
-      console.log('消息在本地找到:', messageId)
       return true
     }
     
-    // 如果本地没有，尝试从服务器获取最新消息列表
-    console.log('消息不在本地，重新获取消息列表:', messageId)
     await chatStore.fetchMessages()
     
-    // 再次检查
     const refreshedMessage = messages.value.find(msg => msg.id === messageId)
-    if (refreshedMessage) {
-      console.log('消息在重新获取后找到:', messageId)
-      return true
-    }
-    
-    console.warn('消息不存在，即使在重新获取后:', messageId)
-    return false
-    
+    return !!refreshedMessage
   } catch (err) {
     console.error('验证消息存在失败:', err)
     return false
   }
 }
 
-// 检查消息是否可以重新生成
-const canRegenerateMessage = (msg: Message): boolean => {
-  if (isStreaming.value) return false
-  if (msg.role !== 'assistant') return false
-  
-  // 检查是否是最新消息
-  const latestMessage = getLatestMessage()
-  if (!latestMessage || latestMessage.id !== msg.id) {
-    return false
+// 确认删除消息
+const confirmDeleteMessage = async () => {
+  if (deletingMessageId.value === null) {
+    return
   }
   
-  // 检查是否被分支引用
-  if (isMessageBranchingPoint(msg.id)) {
-    return false
+  try {
+    if (!currentThread.value) {
+      showToast('当前没有活跃的线程', 'error')
+      return
+    }
+
+    const result = await chatStore.deleteMessage(currentThread.value.id, deletingMessageId.value)
+    
+    if (result.success) {
+      showToast('消息删除成功', 'success')
+      scrollToBottom()
+    } else {
+      showToast(result.error || '删除失败', 'error')
+    }
+  } catch (error) {
+    console.error('删除消息失败:', error)
+    const errorMsg = error instanceof Error ? error.message : '删除消息失败'
+    showToast(errorMsg, 'error')
+  } finally {
+    // 重置状态
+    showDeleteMessageConfirm.value = false
+    deletingMessageId.value = null
   }
-  
-  return true
 }
 
-// 获取重新生成按钮标题
-const getRegenerateButtonTitle = (msg: Message) => {
-  if (isStreaming.value) {
-    return '请等待生成完成'
-  }
-  
-  if (msg.role !== 'assistant') {
-    return '只能重新生成AI消息'
-  }
-  
-  // 检查是否是最新消息
-  const latestMessage = getLatestMessage()
-  if (!latestMessage) {
-    return '当前没有消息'
-  }
-  
-  if (msg.id !== latestMessage.id) {
-    return '只能重新生成最新AI消息'
-  }
-  
-  // 检查是否被分支引用
-  if (isMessageBranchingPoint(msg.id)) {
-    return '此消息已被分支引用，无法重新生成'
-  }
-  
-  return '重新生成此AI回复'
+// 取消删除消息
+const cancelDeleteMessage = () => {
+  showDeleteMessageConfirm.value = false
+  deletingMessageId.value = null
 }
 
 // ---------- 工具函数 ----------
@@ -713,19 +769,13 @@ onMounted(async () => {
   console.log('ChatView 组件挂载')
   
   try {
-    // 初始化store
     await chatStore.initialize()
-    
-    // 1. 先获取对话列表
     await chatStore.fetchConversations()
-    console.log('对话列表加载完成:', chatStore.conversations.length)
     
-    // 2. 如果没有对话，创建一个默认对话
     if (chatStore.conversations.length === 0) {
       console.log('没有对话，创建默认对话')
       await chatStore.createConversation('欢迎对话')
     } else if (!chatStore.currentConversation) {
-      // 3. 如果有对话但没有当前对话，切换到第一个对话
       console.log('有对话但没有当前对话，切换到第一个')
       await chatStore.switchConversation(chatStore.conversations[0]!.id)
     }
@@ -734,12 +784,10 @@ onMounted(async () => {
     console.error('初始化失败:', error)
   }
   
-  // 聚焦输入框
   nextTick(() => {
     messageInputRef.value?.focusInput()
   })
   
-  // 监听全局点击，关闭对话菜单
   document.addEventListener('click', handleClickOutside)
 })
 
@@ -886,5 +934,73 @@ watch(messages, () => {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+}
+</style>
+
+<!-- 添加全局样式，用于Teleport到body的元素 -->
+<style>
+/* 对话上下文菜单样式 - 必须放在全局样式或非scoped样式中 */
+.conversation-context-menu {
+  position: fixed;
+  background: white;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+  z-index: 10000;
+  min-width: 140px;
+  overflow: hidden;
+  animation: menuFadeIn 0.2s ease;
+  backdrop-filter: blur(8px);
+}
+
+.conversation-context-menu .menu-content {
+  display: flex;
+  flex-direction: column;
+  padding: 6px 0;
+}
+
+.conversation-context-menu .menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  border: none;
+  background: transparent;
+  color: #374151;
+  font-size: 13px;
+  font-weight: 400;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.2s ease;
+  outline: none;
+}
+
+.conversation-context-menu .menu-item:hover {
+  background: rgba(0, 0, 0, 0.05);
+}
+
+.conversation-context-menu .menu-item.delete-item {
+  color: #dc2626;
+}
+
+.conversation-context-menu .menu-item.delete-item:hover {
+  background: rgba(220, 38, 38, 0.1);
+}
+
+.conversation-context-menu .menu-icon {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+}
+
+@keyframes menuFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(-5px) scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
 }
 </style>

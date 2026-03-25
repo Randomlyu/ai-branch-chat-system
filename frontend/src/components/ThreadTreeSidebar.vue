@@ -7,7 +7,7 @@
         <button 
           v-if="!isCollapsed" 
           class="btn-refresh" 
-          @click="$emit('refresh')" 
+          @click="handleRefresh" 
           title="刷新分支树"
           :disabled="isStreaming"
         >
@@ -16,7 +16,7 @@
           </svg>
         </button>
         <!-- 收起按钮 -->
-        <button class="btn-toggle-sidebar" @click="$emit('toggle-collapse')" :title="isCollapsed ? '展开侧边栏' : '收起侧边栏'">
+        <button class="btn-toggle-sidebar" @click="handleToggleCollapse" :title="isCollapsed ? '展开侧边栏' : '收起侧边栏'">
           <svg v-if="isCollapsed" class="sidebar-icon" viewBox="0 0 24 24" width="20" height="20">
             <path fill="currentColor" d="M8.59,16.58L13.17,12L8.59,7.41L10,6L16,12L10,18L8.59,16.58Z" />
           </svg>
@@ -35,8 +35,9 @@
         :key="thread.id"
         :thread="thread"
         :current-thread-id="currentThreadId"
-        @switch="$emit('switch', $event)"
-        @deleted="$emit('thread-deleted', $event)"
+        @switch="handleSwitchThread"
+        @deleted="handleThreadDeleted"
+        @request-delete="handleRequestDeleteThread"
       />
     </div>
   </aside>
@@ -46,6 +47,7 @@
 import ThreadTreeNode from '@/components/ThreadTreeNode.vue'
 import type { ThreadTree } from '@/types/chat'
 
+// 定义Props
 defineProps<{
   threadTree: ThreadTree[]
   currentThreadId?: number
@@ -53,12 +55,46 @@ defineProps<{
   isStreaming: boolean
 }>()
 
-defineEmits<{
+// 定义Events
+const emit = defineEmits<{
   refresh: []
   'toggle-collapse': []
   switch: [threadId: number]
   'thread-deleted': [threadId: number, parentThreadId?: number | null]
+  'request-delete-thread': [payload: { 
+    threadId: number; 
+    threadTitle: string;
+    canDelete?: boolean;
+    reason?: string;
+  }]
 }>()
+
+// 事件处理方法
+const handleRefresh = () => {
+  emit('refresh')
+}
+
+const handleToggleCollapse = () => {
+  emit('toggle-collapse')
+}
+
+const handleSwitchThread = (threadId: number) => {
+  emit('switch', threadId)
+}
+
+const handleThreadDeleted = (threadId: number, parentThreadId?: number | null) => {
+  emit('thread-deleted', threadId, parentThreadId)
+}
+
+// 处理删除线程请求
+const handleRequestDeleteThread = (payload: { 
+  threadId: number; 
+  threadTitle: string;
+  canDelete?: boolean;
+  reason?: string;
+}) => {
+  emit('request-delete-thread', payload)
+}
 </script>
 
 <style scoped>

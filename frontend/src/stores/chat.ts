@@ -929,7 +929,7 @@ const regenerateMessage = async (
   }
 }
 
-// ===== 新增：删除线程（仅限叶子节点） =====
+// 删除线程（仅限叶子节点）
 const deleteThread = async (threadId: number): Promise<{
   success: boolean;
   error?: string;
@@ -1021,7 +1021,6 @@ const deleteThread = async (threadId: number): Promise<{
     isLoading.value = false
   }
 }
-// ========================================
 
 // 检查消息是否被分支引用
 const isMessageBranchingPoint = (messageId: number): boolean => {
@@ -1097,6 +1096,219 @@ const isMessageBranchingPoint = (messageId: number): boolean => {
     await fetchAIUsage()
   }
 
+// ---------- 新增计算属性 ----------
+const latestMessage = computed(() => {
+  if (messages.value.length === 0) return null
+  return messages.value[messages.value.length - 1]
+})
+
+// ---------- 新增消息验证方法 ----------
+
+// 验证消息是否可以重新生成
+const validateMessageForRegeneration = (message: Message): boolean => {
+  if (isStreaming.value) return false
+  if (message.role !== 'assistant') return false
+  
+  // 检查是否是最新消息
+  if (!latestMessage.value || latestMessage.value.id !== message.id) {
+    return false
+  }
+  
+  // 检查是否被分支引用
+  if (isMessageBranchingPoint(message.id)) {
+    return false
+  }
+  
+  return true
+}
+
+// 验证消息是否可以创建分支
+const validateMessageForBranching = (message: Message): boolean => {
+  if (isStreaming.value) return false
+  if (message.role !== 'assistant') return false
+  
+  if (!latestMessage.value) return false
+  return message.id === latestMessage.value.id
+}
+
+// 验证消息是否可以删除
+const validateMessageForDeletion = (message: Message): boolean => {
+  if (isStreaming.value) return false
+  
+  if (isMessageBranchingPoint(message.id)) {
+    return false
+  }
+  
+  if (message.role !== 'assistant') {
+    return false
+  }
+  
+  return true
+}
+
+// 获取消息操作的工具提示
+const getMessageActionTitles = (message: Message, userInput?: string) => {
+  const titles = {
+    regenerate: '',
+    branch: '',
+    delete: ''
+  }
+  
+  // 重新生成按钮标题
+  if (isStreaming.value) {
+    titles.regenerate = '请等待生成完成'
+  } else if (message.role !== 'assistant') {
+    titles.regenerate = '只能重新生成AI消息'
+  } else if (!latestMessage.value) {
+    titles.regenerate = '当前没有消息'
+  } else if (message.id !== latestMessage.value.id) {
+    titles.regenerate = '只能重新生成最新AI消息'
+  } else if (isMessageBranchingPoint(message.id)) {
+    titles.regenerate = '此消息已被分支引用，无法重新生成'
+  } else {
+    titles.regenerate = '重新生成此AI回复'
+  }
+  
+  // 创建分支按钮标题
+  if (isStreaming.value) {
+    titles.branch = '请等待生成完成'
+  } else if (message.role !== 'assistant') {
+    titles.branch = '只能在AI回复处创建分支'
+  } else if (!latestMessage.value) {
+    titles.branch = '当前没有消息'
+  } else if (message.id !== latestMessage.value.id) {
+    titles.branch = '只能在最新消息处创建分支'
+  } else {
+    titles.branch = '从此回复创建新分支'
+  }
+  
+  // 删除按钮标题
+  if (isStreaming.value) {
+    titles.delete = '请等待生成完成'
+  } else if (isMessageBranchingPoint(message.id)) {
+    titles.delete = '此消息已被分支引用，无法删除'
+  } else if (message.role !== 'assistant') {
+    titles.delete = '只能删除AI消息'
+  } else {
+    titles.delete = '删除此AI回复及其对应的用户提问'
+  }
+  
+  return titles
+}
+
+// ---------- 输入相关工具方法 ----------
+const getInputPlaceholder = (): string => {
+  if (isTokenLimitReached.value) {
+    return '当日API用量已达上限，请明日再试'
+  }
+  if (isStreaming.value) {
+    return 'AI正在生成，请稍后...'
+  }
+  return '发送消息给AI... (Shift+Enter换行，Enter发送)'
+}
+
+const getSendButtonTitle = (userInput: string, streamingEnabled: boolean = true): string => {
+  if (isTokenLimitReached.value) {
+    return '用量已达上限'
+  }
+  if (isStreaming.value) {
+    return '停止生成'
+  }
+  if (!userInput.trim()) {
+    return '请输入消息'
+  }
+  return streamingEnabled ? '发送消息（流式）' : '发送消息'
+}
+
+// 检查是否可以发送消息
+const canSendMessage = (userInput: string): boolean => {
+  if (!userInput.trim()) return false
+  if (isStreaming.value) return false
+  if (isTokenLimitReached.value) return false
+  return true
+}
+
+// 复制到剪贴板
+const copyToClipboard = async (content: string): Promise<boolean> => {
+  try {
+    await navigator.clipboard.writeText(content)
+    return true
+  } catch (err) {
+    console.error('复制失败:', err)
+    // 降级方案
+    try {
+      const textArea = document.createElement('textarea')
+      textArea.value = content
+      document.body.appendChild(textArea)
+      textArea.select()
+      const success = document.execCommand('copy')
+      document.body.removeChild(textArea)
+      return success
+    } catch (fallbackErr) {
+      console.error('降级复制失败:', fallbackErr)
+      return false
+    }
+  }
+}
+
+// 验证消息是否可以操作（重新生成、创建分支、删除）
+const validateMessageOperation = (messageId: number, operation: 'regenerate' | 'branch' | 'delete'): {
+  can: boolean
+  reason?: string
+} => {
+  const message = messages.value.find(msg => msg.id === messageId)
+  if (!message) {
+    return { can: false, reason: '消息不存在' }
+  }
+  
+  switch (operation) {
+    case 'regenerate':
+      if (isStreaming.value) {
+        return { can: false, reason: '请等待生成完成' }
+      }
+      if (message.role !== 'assistant') {
+        return { can: false, reason: '只能重新生成AI消息' }
+      }
+      if (!latestMessage.value || message.id !== latestMessage.value.id) {
+        return { can: false, reason: '只能重新生成最新AI消息' }
+      }
+      if (isMessageBranchingPoint(message.id)) {
+        return { can: false, reason: '此消息已被分支引用，无法重新生成' }
+      }
+      return { can: true }
+      
+    case 'branch':
+      if (isStreaming.value) {
+        return { can: false, reason: '请等待生成完成' }
+      }
+      if (message.role !== 'assistant') {
+        return { can: false, reason: '只能在AI回复处创建分支' }
+      }
+      if (!latestMessage.value || message.id !== latestMessage.value.id) {
+        return { can: false, reason: '只能在最新消息处创建分支' }
+      }
+      if (currentThread.value?.depth !== undefined && currentThread.value.depth >= 3) {
+        return { can: false, reason: '分支深度已达上限（3层）' }
+      }
+      return { can: true }
+      
+    case 'delete':
+      if (isStreaming.value) {
+        return { can: false, reason: '请等待生成完成' }
+      }
+      if (isMessageBranchingPoint(message.id)) {
+        return { can: false, reason: '此消息已被分支引用，无法删除' }
+      }
+      if (message.role !== 'assistant') {
+        return { can: false, reason: '只能删除AI消息' }
+      }
+      return { can: true }
+      
+    default:
+      return { can: false, reason: '未知操作' }
+  }
+}
+
   return {
     // 状态
     conversations,
@@ -1117,7 +1329,8 @@ const isMessageBranchingPoint = (messageId: number): boolean => {
     // 计算属性
     threadPath,
     isTokenLimitReached,
-    
+    latestMessage,
+
     // 动作
     fetchConversations,
     createConversation,
@@ -1138,12 +1351,22 @@ const isMessageBranchingPoint = (messageId: number): boolean => {
     deleteMessage,
     isMessageBranchingPoint,
     validateMessageExists, 
-    
+    // 新增方法
+    validateMessageForRegeneration,
+    validateMessageForBranching,
+    validateMessageForDeletion,
+    getMessageActionTitles,
+    getInputPlaceholder,
+    getSendButtonTitle,
+    canSendMessage,
+    copyToClipboard,
+    validateMessageOperation,
+
     // 新增动作
     fetchAIUsage,
     fetchAvailableModels,
     setCurrentModel,
     initialize,
-     deleteThread
+    deleteThread
   }
 })

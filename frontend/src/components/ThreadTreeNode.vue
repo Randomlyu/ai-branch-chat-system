@@ -113,7 +113,7 @@
               </svg>
               重命名
             </button>
-            <!-- ===== 新增：删除线程选项 ===== -->
+            <!-- 删除线程选项 -->
             <button 
               class="thread-actions-item thread-actions-item-delete"
               :class="{ 'disabled': !canDeleteThread }"
@@ -126,7 +126,6 @@
               </svg>
               删除分支
             </button>
-            <!-- ================================== -->
           </div>
         </div>
       </div>
@@ -140,6 +139,8 @@
         :thread="child"
         :current-thread-id="currentThreadId"
         @switch="$emit('switch', $event)"
+        @deleted="$emit('deleted', $event)"
+        @request-delete="$emit('request-delete', $event)"
       />
     </div>
   </div>
@@ -159,9 +160,7 @@ interface ThreadTree {
   created_at?: string
   updated_at?: string
   conversation_id?: number
-  // ===== 新增字段 =====
   parent_thread_id?: number | null
-  // ====================
 }
 
 const props = defineProps<{
@@ -171,9 +170,14 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   switch: [threadId: number]
-  // ===== 新增事件 =====
   deleted: [threadId: number, parentThreadId?: number | null]
-  // ====================
+  // 修正：定义 request-delete 事件的 payload 类型
+  'request-delete': [payload: { 
+    threadId: number; 
+    threadTitle: string; 
+    canDelete?: boolean; 
+    reason?: string;
+  }]
 }>()
 
 // 状态
@@ -201,7 +205,6 @@ const canDeleteThread = computed(() => {
   
   return true
 })
-// ====================================
 
 // 菜单按钮显示条件
 const showMenuButton = computed(() => {
@@ -385,7 +388,7 @@ const onInputBlur = (event: FocusEvent) => {
   }, 100)
 }
 
-// ===== 新增：删除线程 =====
+// ===== 修改：删除线程 =====
 const onDeleteThread = async (event: MouseEvent) => {
   event.stopPropagation()
   
@@ -397,38 +400,26 @@ const onDeleteThread = async (event: MouseEvent) => {
     } else if (hasChildren.value) {
       message = '此分支包含子分支，无法删除'
     }
-    alert(message)
+    // 使用事件触发提示，让父组件处理
+    emit('request-delete', { 
+      threadId: props.thread.id, 
+      threadTitle: props.thread.title || getThreadTitle(props.thread),
+      canDelete: false,
+      reason: message
+    })
     isMenuVisible.value = false
     return
   }
   
-  // 确认删除
+  // 触发请求删除事件，让父组件处理确认和删除
   const threadTitle = props.thread.title || getThreadTitle(props.thread)
-  if (!confirm(`确定要删除分支 "${threadTitle}" 吗？此操作不可撤销。`)) {
-    isMenuVisible.value = false
-    return
-  }
-  
-  try {
-    const chatStore = useChatStore()
-    const result = await chatStore.deleteThread(props.thread.id)
-    
-    if (result.success) {
-      // 删除成功，发出删除事件
-      emit('deleted', props.thread.id, props.thread.parent_thread_id)
-      isMenuVisible.value = false
-    } else {
-      // 删除失败，显示错误
-      alert(result.error || '删除分支失败')
-    }
-  } catch (error) {
-    console.error('删除分支失败:', error)
-    alert('删除分支失败，请重试')
-  } finally {
-    isMenuVisible.value = false
-  }
+  emit('request-delete', { 
+    threadId: props.thread.id, 
+    threadTitle,
+    canDelete: true
+  })
+  isMenuVisible.value = false
 }
-// ===============================
 
 // 监听全局点击
 const handleClickOutside = (event: MouseEvent) => {
