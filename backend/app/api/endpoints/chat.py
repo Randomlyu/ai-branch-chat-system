@@ -630,7 +630,8 @@ async def send_message_stream(
             # 5. 调用AI流式服务
             model = request.model
             ai_response_content = ""
-            
+            is_interrupted = False  # 新增：标记是否被中断
+
             # 生成流式响应
             stream_generator = ai_service.stream_chat_completion(
                 messages=ai_messages,
@@ -638,21 +639,32 @@ async def send_message_stream(
                 user_id=current_user["username"]  # 传递用户名作为用户标识
             )
             
-            async for chunk in stream_generator:
-                yield chunk
-                
-                # 解析chunk以获取内容
-                if chunk.startswith("data: "):
-                    try:
-                        data_str = chunk[6:]  # 移除"data: "前缀
-                        if data_str.strip():  # 避免空字符串
-                            data = json.loads(data_str.strip())
-                            if "content" in data and not data.get("done") and not data.get("error"):
-                                ai_response_content += data["content"]
-                    except json.JSONDecodeError:
-                        pass
+            try:
+                async for chunk in stream_generator:
+                    yield chunk
+                    
+                    # 解析chunk以获取内容
+                    if chunk.startswith("data: "):
+                        try:
+                            data_str = chunk[6:]  # 移除"data: "前缀
+                            if data_str.strip():  # 避免空字符串
+                                data = json.loads(data_str.strip())
+                                if "content" in data and not data.get("done") and not data.get("error"):
+                                    ai_response_content += data["content"]
+                        except json.JSONDecodeError:
+                            pass
+            except Exception as e:
+                # 捕获中断异常
+                logger.info(f"流式生成被中断: {str(e)}")
+                is_interrupted = True
+                # 不重新抛出异常，继续处理
             
             # 6. 创建AI回复消息
+            if is_interrupted:
+               # 只要被中断，就保存为"您中断了生成"
+               ai_response_content = "您中断了生成"
+               logger.info(f"流式生成被中断，将保存中断消息: {ai_response_content}")
+            
             ai_message = models.Message(
                 thread_id=request.thread_id,
                 role="assistant",
@@ -676,7 +688,8 @@ async def send_message_stream(
                 "done": True,
                 "message_id": ai_message.id,
                 "user_message_id": user_message.id,
-                "model_used": model or ai_service.get_default_model()
+                "model_used": model or ai_service.get_default_model(),
+                "is_interrupted": is_interrupted  # 新增：标记是否是中断消息
             })
             yield f"data: {message_data}\n\n"
             

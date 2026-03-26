@@ -92,9 +92,7 @@ export interface ThreadTree {
   is_active: boolean
   created_at: string
   updated_at: string
-  // ===== 新增字段 =====
   parent_thread_id?: number | null
-  // ====================
   children?: ThreadTree[]
 }
 
@@ -110,9 +108,9 @@ export interface StreamResponseData {
   content: string
   done: boolean
   error?: boolean
-  message_id?: number  // 新增：消息ID
-  user_message_id?: number  // 新增：用户消息ID
-  model_used?: string  // 新增：使用的模型
+  message_id?: number
+  user_message_id?: number
+  model_used?: string
 }
 
 // AI用量信息

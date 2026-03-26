@@ -342,6 +342,7 @@ const sendMessageStream = async (content: string): Promise<void> => {
     // 准备流式配置
     const streamConfig: StreamRequestConfig = {
       onMessage: (data: StreamResponseData) => {
+        console.log('收到流式数据:', data)
         if (data.error) {
           // 处理错误
           const errorMsg = data.content || 'AI服务发生错误'
@@ -358,13 +359,14 @@ const sendMessageStream = async (content: string): Promise<void> => {
             }
           }
         } else if (data.done) {
+          console.log('流式完成，数据:', data)
           // 流式完成
           isStreaming.value = false
           streamingController.value = null
           
           // 处理消息ID更新
           if (data.message_id && data.user_message_id) {
-            // 方案A：如果有消息ID，直接更新本地消息
+            //如果有消息ID，直接更新本地消息
             setTimeout(() => {
               // 更新用户消息ID
               const userMsgIndex = messages.value.findIndex(msg => 
@@ -394,7 +396,7 @@ const sendMessageStream = async (content: string): Promise<void> => {
               })
             }, 0)
           } else {
-            // 方案B：如果没有消息ID，重新获取消息列表
+            //如果没有消息ID，重新获取消息列表
             setTimeout(async () => {
               try {
                 console.log('重新获取消息列表以获取真实ID...')
@@ -423,9 +425,6 @@ const sendMessageStream = async (content: string): Promise<void> => {
               if (message) {
                 // 使用Vue的响应式更新
                 message.content += data.content
-                
-                // 关键：强制响应式更新 - 通过创建新数组
-                // 这解决了格式显示问题
                 messages.value = [...messages.value]
               }
             }
@@ -550,21 +549,32 @@ const sendMessageStream = async (content: string): Promise<void> => {
 const stopStreaming = async (): Promise<void> => {
   if (isStreaming.value && streamingController.value) {
     try {
-      // 1. 中止当前流式请求
-      streamingController.value.abort()
+      console.log('正在停止流式生成...')
       
-      // 2. 调用API停止生成
+      // 1. 先通知后端停止生成（但不要立即中止前端流式请求）
       await chatApi.stopGeneration()
       
-      // 3. 重置流式状态
+      console.log('已发送停止请求，等待后端处理...')
+      
+      // 2. 等待一小段时间，让后端有机会保存中断消息
+      // 注意：我们不立即中止流式请求，让后端返回完成事件
+      await new Promise(resolve => setTimeout(resolve, 1000)) // 等待1秒
+      
+      // 3. 然后中止前端的流式请求
+      if (streamingController.value) {
+        streamingController.value.abort()
+      }
+      
+      // 4. 重置流式状态
       isStreaming.value = false
       streamingController.value = null
       streamingModel.value = ''
       
-      // 4. 不要重新获取消息列表，保留当前内容
-      // 这样可以保留不完整的消息
+      // 5. 重新获取消息，以获取后端保存的中断消息
+      console.log('重新获取消息列表...')
+      await fetchMessages()
       
-      // 5. 刷新用量信息
+      // 6. 刷新用量信息
       await fetchAIUsage()
       
       console.log('已停止流式生成')
@@ -578,7 +588,8 @@ const stopStreaming = async (): Promise<void> => {
       streamingController.value = null
       streamingModel.value = ''
       
-      // 不重新获取消息，保留当前状态
+      // 重新获取消息，以确保状态一致
+      await fetchMessages()
     }
   }
 }
