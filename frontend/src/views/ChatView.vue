@@ -640,26 +640,28 @@ const confirmRegenerateMessage = async () => {
     return
   }
   
+  // 立即关闭对话框
+  showRegenerateConfirm.value = false
+  const messageId = regeneratingMessageId.value
+  regeneratingMessageId.value = null
+  
   try {
     const result = await chatStore.regenerateMessage(
       chatStore.currentThread?.id!,
-      regeneratingMessageId.value,
+      messageId,
       chatStore.currentModel,
       true
     )
     
     if (result.success) {
-      showToast('消息重新生成中...', 'success')
+      // 成功开始重新生成
+      // 不需要额外提示，因为流式生成指示器会显示
     } else {
       showToast(result.error || '重新生成失败', 'error')
     }
   } catch (error) {
     console.error('重新生成失败:', error)
     showToast('重新生成失败', 'error')
-  } finally {
-    // 重置状态
-    showRegenerateConfirm.value = false
-    regeneratingMessageId.value = null
   }
 }
 

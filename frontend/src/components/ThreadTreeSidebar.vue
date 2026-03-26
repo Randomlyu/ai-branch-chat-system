@@ -18,10 +18,10 @@
         <!-- 收起按钮 -->
         <button class="btn-toggle-sidebar" @click="handleToggleCollapse" :title="isCollapsed ? '展开侧边栏' : '收起侧边栏'">
           <svg v-if="isCollapsed" class="sidebar-icon" viewBox="0 0 24 24" width="20" height="20">
-            <path fill="currentColor" d="M8.59,16.58L13.17,12L8.59,7.41L10,6L16,12L10,18L8.59,16.58Z" />
+            <path fill="currentColor" d="M15.41,16.58L10.83,12L15.41,7.41L14,6L8,12L14,18L15.41,16.58Z" />
           </svg>
           <svg v-else class="sidebar-icon" viewBox="0 0 24 24" width="20" height="20">
-            <path fill="currentColor" d="M15.41,16.58L10.83,12L15.41,7.41L14,6L8,12L14,18L15.41,16.58Z" />
+            <path fill="currentColor" d="M8.59,16.58L13.17,12L8.59,7.41L10,6L16,12L10,18L8.59,16.58Z" />
           </svg>
         </button>
       </div>

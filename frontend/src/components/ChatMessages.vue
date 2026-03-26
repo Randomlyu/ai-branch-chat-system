@@ -1,9 +1,10 @@
 <template>
   <div class="messages-container" ref="messagesContainerRef">
-    <div v-for="msg in messages" :key="msg.id" class="message-item-wrapper">
+    <div v-for="(msg, index) in messages" :key="msg.id" class="message-item-wrapper">
       <MessageItem
         :msg="msg"
         :is-streaming="isStreaming"
+        :is-latest-message="index === messages.length - 1"
         :can-regenerate="canRegenerateMessage(msg)"
         :regenerate-title="getRegenerateButtonTitle(msg)"
         :can-create-branch="canCreateBranch(msg)"
@@ -20,19 +21,8 @@
       />
     </div>
     
-    <!-- 流式生成指示器 -->
-    <div v-if="isStreaming" class="streaming-indicator">
-      <div class="streaming-dots">
-        <span></span><span></span><span></span>
-      </div>
-      <div class="streaming-text">{{ streamingModelName }}正在生成...</div>
-      <button class="btn-stop" @click="handleStopGenerating" title="停止生成">
-        停止
-      </button>
-    </div>
-    
     <!-- 思考指示器 -->
-    <div v-else-if="isLoading" class="thinking-indicator">
+    <div v-if="isLoading" class="thinking-indicator">
       <div class="thinking-dots">
         <span></span><span></span><span></span>
       </div>
@@ -42,7 +32,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, nextTick } from 'vue'
+import { ref, nextTick } from 'vue'
 import MessageItem from './MessageItem.vue'
 import { 
   formatTime, 
@@ -71,11 +61,6 @@ const emit = defineEmits<{
 
 // 模板引用
 const messagesContainerRef = ref<HTMLElement>()
-
-// 计算属性
-const streamingModelName = computed(() => {
-  return props.streamingModel ? getModelDisplayName(props.streamingModel) : 'AI'
-})
 
 // 消息操作验证方法
 const canRegenerateMessage = (msg: Message): boolean => {
@@ -197,10 +182,6 @@ const handleDeleteMessage = (messageId: number) => {
   emit('delete', messageId)
 }
 
-const handleStopGenerating = () => {
-  emit('stop')
-}
-
 // 滚动到底部
 const scrollToBottom = () => {
   if (messagesContainerRef.value) {
@@ -242,69 +223,6 @@ defineExpose({
     opacity: 1;
     transform: translateY(0);
   }
-}
-
-/* 流式生成指示器 */
-.streaming-indicator {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 12px 16px;
-  background: rgba(59, 130, 246, 0.05);
-  border: 1px solid rgba(59, 130, 246, 0.2);
-  border-radius: 8px;
-  margin: 12px auto;
-  max-width: 100%;
-  width: 100%;
-  animation: slideDown 0.3s ease;
-  box-sizing: border-box;
-}
-
-.streaming-dots {
-  display: flex;
-  gap: 4px;
-  margin-right: 12px;
-}
-
-.streaming-dots span {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: #3b82f6;
-  animation: bounce 1.4s infinite ease-in-out both;
-}
-
-.streaming-dots span:nth-child(1) { animation-delay: -0.32s; }
-.streaming-dots span:nth-child(2) { animation-delay: -0.16s; }
-.streaming-dots span:nth-child(3) { animation-delay: 0s; }
-
-.streaming-text {
-  flex: 1;
-  color: #3b82f6;
-  font-size: 13px;
-  font-weight: 500;
-}
-
-.btn-stop {
-  padding: 6px 12px;
-  background: rgba(239, 68, 68, 0.1);
-  color: #dc2626;
-  border: 1px solid rgba(239, 68, 68, 0.2);
-  border-radius: 6px;
-  font-size: 12px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: all 0.2s ease;
-  margin-left: 12px;
-}
-
-.btn-stop:hover {
-  background: rgba(239, 68, 68, 0.2);
-  transform: translateY(-1px);
-}
-
-.btn-stop:active {
-  transform: translateY(0);
 }
 
 /* 思考指示器 */

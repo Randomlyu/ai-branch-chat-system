@@ -546,7 +546,7 @@ const sendMessageStream = async (content: string): Promise<void> => {
     }
   }
 
-  // 新增：停止流式生成
+// 停止流式生成
 const stopStreaming = async (): Promise<void> => {
   if (isStreaming.value && streamingController.value) {
     try {
@@ -559,16 +559,12 @@ const stopStreaming = async (): Promise<void> => {
       // 3. 重置流式状态
       isStreaming.value = false
       streamingController.value = null
+      streamingModel.value = ''
       
-      // 4. 等待一小段时间，让后端处理停止
-      await new Promise(resolve => setTimeout(resolve, 500))
+      // 4. 不要重新获取消息列表，保留当前内容
+      // 这样可以保留不完整的消息
       
-      // 5. 重新获取消息列表，确保状态一致
-      if (currentThread.value) {
-        await fetchMessages()
-      }
-      
-      // 6. 刷新用量信息
+      // 5. 刷新用量信息
       await fetchAIUsage()
       
       console.log('已停止流式生成')
@@ -580,16 +576,13 @@ const stopStreaming = async (): Promise<void> => {
       // 即使API调用失败，也要重置前端状态
       isStreaming.value = false
       streamingController.value = null
+      streamingModel.value = ''
       
-      // 强制重新获取消息
-      if (currentThread.value) {
-        await fetchMessages()
-      }
+      // 不重新获取消息，保留当前状态
     }
   }
 }
 
-// 在store中添加以下函数
 const validateMessageExists = async (messageId: number): Promise<boolean> => {
   if (!currentThread.value) return false
   

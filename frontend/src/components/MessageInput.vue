@@ -43,16 +43,16 @@
           </div>
           <button
             class="btn-send"
-            @click="handleSend"
-            :disabled="!canSend"
+            @click="handleButtonClick"
+            :disabled="!isButtonEnabled"
             :class="{ 
-              disabled: !canSend,
-              streaming: isStreaming
+            disabled: !isButtonEnabled,
+            streaming: isStreaming
             }"
             :title="sendButtonTitle"
           >
-            <span v-if="isStreaming" class="icon stop-icon" title="停止生成">⏹️</span>
-            <span v-else class="icon send-icon">⬆</span>
+          <span v-if="isStreaming" class="icon stop-icon" title="停止生成">⏹️</span>
+          <span v-else class="icon send-icon">⬆</span>
           </button>
         </div>
       </div>
@@ -139,6 +139,14 @@ const localStreamingEnabled = computed({
 // 计算属性
 const conversationId = computed(() => props.currentConversation?.id)
 const threadId = computed(() => props.currentThread?.id)
+const isButtonEnabled = computed(() => {
+  if (props.isStreaming) {
+    // 流式生成时，停止按钮始终可用
+    return true
+  }
+  // 非流式生成时，使用 canSend
+  return props.canSend
+})
 
 // 模板引用
 const inputTextarea = ref<HTMLTextAreaElement>()
@@ -147,6 +155,16 @@ const inputTextarea = ref<HTMLTextAreaElement>()
 const handleSend = () => {
   if (props.canSend) {
     emit('send')
+  }
+}
+
+const handleButtonClick = () => {
+  if (props.isStreaming) {
+    // 流式生成时，触发停止
+    emit('stop')
+  } else {
+    // 非流式生成时，触发发送
+    handleSend()
   }
 }
 

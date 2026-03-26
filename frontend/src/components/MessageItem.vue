@@ -11,6 +11,14 @@
       </div>
       <div class="message-text" v-html="formattedContent"></div>
       
+      <!-- 流式生成指示器 -->
+      <div v-if="isGenerating" class="generating-indicator">
+        <div class="generating-dots">
+          <span></span><span></span><span></span>
+        </div>
+        <div class="generating-text">{{ formattedModelName || 'AI' }}正在生成...</div>
+      </div>
+      
       <!-- 消息操作按钮 -->
       <div class="message-actions" v-if="msg.role === 'assistant'">
         <!-- 复制按钮 -->
@@ -65,14 +73,16 @@
 </template>
 
 <script setup lang="ts">
+import { computed} from 'vue'
 import type { Message } from '@/types/chat'
 
-// 定义Props - 完整列出所有props
-defineProps<{
+// 定义Props
+interface MessageItemProps {
   // 原始消息对象
   msg: Message
   // 状态相关
   isStreaming: boolean
+  isLatestMessage?: boolean
   // 按钮状态相关
   canRegenerate: boolean
   canCreateBranch: boolean
@@ -85,7 +95,12 @@ defineProps<{
   formattedTime: string
   formattedContent: string
   formattedModelName: string
-}>()
+}
+
+// 使用 withDefaults 设置默认值
+const props = withDefaults(defineProps<MessageItemProps>(), {
+  isLatestMessage: false
+})
 
 // 定义事件
 defineEmits<{
@@ -94,6 +109,15 @@ defineEmits<{
   branch: [messageId: number]
   delete: [messageId: number]
 }>()
+
+// 计算属性：是否显示生成指示器
+const isGenerating = computed(() => {
+  if (!props.isStreaming) return false
+  if (props.msg.role !== 'assistant') return false
+  if (!props.isLatestMessage) return false
+  
+  return true
+})
 </script>
 
 <style scoped>
@@ -207,6 +231,45 @@ defineEmits<{
 
 .assistant .message-text {
   border-bottom-left-radius: 4px;
+}
+
+/* 生成指示器样式 */
+.generating-indicator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 0 0 0;
+  font-size: 12px;
+  color: #666;
+  border-top: 1px solid rgba(0, 0, 0, 0.05);
+  margin-top: 8px;
+}
+
+.generating-dots {
+  display: flex;
+  gap: 4px;
+}
+
+.generating-dots span {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #3b82f6;
+  animation: bounce 1.4s infinite ease-in-out both;
+}
+
+.generating-dots span:nth-child(1) { animation-delay: -0.32s; }
+.generating-dots span:nth-child(2) { animation-delay: -0.16s; }
+.generating-dots span:nth-child(3) { animation-delay: 0s; }
+
+.generating-text {
+  font-size: 12px;
+  color: #666;
+}
+
+@keyframes bounce {
+  0%, 80%, 100% { transform: scale(0); }
+  40% { transform: scale(1.0); }
 }
 
 /* 消息操作按钮 */
