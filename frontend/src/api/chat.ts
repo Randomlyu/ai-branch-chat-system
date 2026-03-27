@@ -6,17 +6,14 @@ import type {
   ThreadTree,
   CreateConversationRequest,
   SendMessageRequest,
-  SendMessageResponse,
-  CreateBranchRequest,
   ApiResponse,
   ThreadUpdate,
   RegenerateMessageRequest,
-  // ===== 新增导入 =====
-  ThreadDeleteInfo
-  // ====================
+  ThreadDeleteInfo,
+  CreateBranchRequest
 } from '@/types/chat'
 
-// 创建axios实例
+// ========== 创建axios实例 ==========
 const apiClient = axios.create({
   baseURL: 'http://localhost:8000/api/v1',
   timeout: 30000, // 30秒超时
@@ -25,7 +22,7 @@ const apiClient = axios.create({
   }
 })
 
-// 请求拦截器
+// ========== 请求拦截器 ==========
 apiClient.interceptors.request.use(
   (config) => {
     // 添加固定Token（使用alice的Token）
@@ -43,7 +40,7 @@ apiClient.interceptors.request.use(
   }
 )
 
-// 响应拦截器
+// ========== 响应拦截器 ==========
 apiClient.interceptors.response.use(
   (response) => {
     // 统一处理响应格式
@@ -54,7 +51,7 @@ apiClient.interceptors.response.use(
       return data
     }
     
-    // 情况2：如果后端返回的是直接的对象或数组（您的实际情况）
+    // 情况2：如果后端返回的是直接的对象或数组
     return {
       data: data,
       code: response.status,
@@ -92,17 +89,22 @@ apiClient.interceptors.response.use(
   }
 )
 
-// 流式响应接口定义
+// ========== 流式相关类型和函数 ==========
+/**
+ * 流式响应数据结构
+ */
 export interface StreamResponseData {
   content: string
   done: boolean
   error?: boolean
-   message_id?: number
+  message_id?: number
   user_message_id?: number
-  model_used?: string  // 新增
+  model_used?: string
 }
 
-// 流式请求配置
+/**
+ * 流式请求配置
+ */
 export interface StreamRequestConfig {
   onMessage: (data: StreamResponseData) => void
   onError?: (error: Error) => void
@@ -110,7 +112,9 @@ export interface StreamRequestConfig {
   signal?: AbortSignal
 }
 
-// 发送流式请求
+/**
+ * 发送流式请求
+ */
 export async function sendStreamRequest(
   url: string,
   data: unknown,
@@ -130,11 +134,11 @@ export async function sendStreamRequest(
     })
 
     if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`)
+      throw new Error(`HTTP错误! 状态码: ${response.status}`)
     }
 
     if (!response.body) {
-      throw new Error('Response body is null')
+      throw new Error('响应体为空')
     }
 
     const reader = response.body.getReader()
@@ -165,7 +169,7 @@ export async function sendStreamRequest(
                 const parsedData: StreamResponseData = JSON.parse(dataStr)
                 onMessage(parsedData)
               } catch (e) {
-                console.error('Failed to parse SSE data:', e, 'Data:', dataStr)
+                console.error('解析SSE数据失败:', e, '数据:', dataStr)
               }
             }
           }
@@ -178,78 +182,106 @@ export async function sendStreamRequest(
     // 正确处理TypeScript的unknown类型
     if (error instanceof Error) {
       if (error.name === 'AbortError') {
-        console.log('Stream request aborted')
+        console.log('流式请求被中止')
         return
       }
       
-      console.error('Stream request failed:', error)
+      console.error('流式请求失败:', error)
       if (onError) {
         onError(error)
       }
     } else {
-      console.error('Stream request failed with unknown error:', error)
+      console.error('流式请求失败，未知错误:', error)
       if (onError) {
-        onError(new Error('Unknown error occurred during stream request'))
+        onError(new Error('流式请求过程中发生未知错误'))
       }
     }
   }
 }
 
-// 对话相关API
+// ========== 对话相关API ==========
+/**
+ * 获取对话列表
+ */
 export const getConversations = async (): Promise<ApiResponse<Conversation[]>> => {
   return apiClient.get('/conversations/')
 }
 
+/**
+ * 获取单个对话详情
+ */
 export const getConversation = async (id: number): Promise<ApiResponse<Conversation>> => {
   return apiClient.get(`/conversations/${id}`)
 }
 
+/**
+ * 创建对话
+ */
 export const createConversation = async (data: CreateConversationRequest): Promise<ApiResponse<Conversation>> => {
   return apiClient.post('/conversations/', data)
 }
 
+/**
+ * 更新对话
+ */
 export const updateConversation = async (id: number, data: Partial<Conversation>): Promise<ApiResponse<Conversation>> => {
   return apiClient.put(`/conversations/${id}`, data)
 }
 
+/**
+ * 删除对话
+ */
 export const deleteConversation = async (id: number): Promise<ApiResponse<void>> => {
   return apiClient.delete(`/conversations/${id}`)
 }
 
-// 线程相关API
+// ========== 线程相关API ==========
+/**
+ * 获取线程详情
+ */
 export const getThread = async (id: number): Promise<ApiResponse<Thread>> => {
   return apiClient.get(`/threads/${id}`)
 }
 
-// 新增：更新线程标题
+/**
+ * 更新线程标题
+ */
 export const updateThreadTitle = async (threadId: number, data: ThreadUpdate): Promise<ApiResponse<Thread>> => {
   return apiClient.put(`/threads/${threadId}`, data)
 }
 
-// ===== 新增：删除线程（仅限叶子节点） =====
+/**
+ * 删除线程（仅限叶子节点）
+ */
 export const deleteThread = async (threadId: number): Promise<ApiResponse<ThreadDeleteInfo>> => {
   return apiClient.delete(`/threads/${threadId}`)
 }
-// =======================================
 
+/**
+ * 获取对话的所有线程
+ */
 export const getConversationThreads = async (conversationId: number): Promise<ApiResponse<Thread[]>> => {
   return apiClient.get(`/conversations/${conversationId}/threads`)
 }
 
+/**
+ * 获取线程树
+ */
 export const getThreadTree = async (conversationId: number): Promise<ApiResponse<ThreadTree[]>> => {
   return apiClient.get(`/conversations/${conversationId}/thread-tree`)
 }
 
-// 消息相关API
+// ========== 消息相关API ==========
+/**
+ * 获取线程消息
+ */
 export const getThreadMessages = async (threadId: number): Promise<ApiResponse<Message[]>> => {
   return apiClient.get(`/threads/${threadId}/messages`)
 }
 
-export const sendMessage = async (data: SendMessageRequest): Promise<ApiResponse<SendMessageResponse>> => {
-  return apiClient.post('/chat/', data)
-}
-
-// 新增：流式发送消息
+/**
+ * 流式发送消息
+ */
 export const sendMessageStream = async (
   data: SendMessageRequest,
   config: StreamRequestConfig
@@ -257,7 +289,9 @@ export const sendMessageStream = async (
   await sendStreamRequest('/chat/stream/', data, config)
 }
 
-// 新增：删除消息
+/**
+ * 删除消息
+ */
 export const deleteMessage = async (
   threadId: number, 
   messageId: number
@@ -268,22 +302,11 @@ export const deleteMessage = async (
   is_latest_deleted: boolean;
 }>> => {
   return apiClient.delete(`/threads/${threadId}/messages/${messageId}`);
-};
-
-// 重新生成消息
-export const regenerateMessage = async (
-  threadId: number,
-  messageId: number,
-  data: RegenerateMessageRequest = {}
-): Promise<ApiResponse<{
-  new_message: Message;
-  old_message_id: number;
-  user_message_id: number;
-}>> => {
-  return apiClient.post(`/threads/${threadId}/messages/${messageId}/regenerate`, data)
 }
 
-// 流式重新生成消息
+/**
+ * 流式重新生成消息
+ */
 export const regenerateMessageStream = async (
   threadId: number,
   messageId: number,
@@ -293,45 +316,63 @@ export const regenerateMessageStream = async (
   await sendStreamRequest(`/threads/${threadId}/messages/${messageId}/regenerate`, data, config)
 }
 
-// 新增：停止生成
+// ========== AI相关API ==========
+/**
+ * 停止生成
+ */
 export const stopGeneration = async (): Promise<ApiResponse<void>> => {
   return apiClient.post('/chat/stop/')
 }
 
-// 新增：获取AI用量信息
+/**
+ * 获取AI用量信息
+ */
 export const getAIUsage = async (): Promise<ApiResponse<unknown>> => {
   return apiClient.get('/chat/usage/')
 }
 
-// 新增：获取可用模型列表
+/**
+ * 获取可用模型列表
+ */
 export const getAvailableModels = async (): Promise<ApiResponse<{ models: string[], default_model: string }>> => {
   return apiClient.get('/chat/models/')
 }
 
+// ========== 分支相关API ==========
+/**
+ * 创建分支
+ */
 export const createBranch = async (data: CreateBranchRequest): Promise<ApiResponse<Thread>> => {
   return apiClient.post('/branch/', data)
 }
 
-// 默认导出
+// ========== 默认导出 ==========
 export default {
+  // 对话相关
   getConversations,
   getConversation,
   createConversation,
   updateConversation,
   deleteConversation,
+  
+  // 线程相关
   getThread,
   updateThreadTitle,
+  deleteThread,
   getConversationThreads,
-  getThreadMessages,
-  sendMessage,
-  sendMessageStream,  // 新增
-  stopGeneration,     // 新增
-  getAIUsage,         // 新增
-  getAvailableModels, // 新增
-  createBranch,
   getThreadTree,
-  deleteMessage,  // 新增
-  // ===== 新增 =====
-  deleteThread
-  // ===============
+  
+  // 消息相关
+  getThreadMessages,
+  sendMessageStream,  // 流式发送消息
+  deleteMessage,
+  regenerateMessageStream,  // 流式重新生成消息
+  
+  // AI相关
+  stopGeneration,
+  getAIUsage,
+  getAvailableModels,
+  
+  // 分支相关
+  createBranch
 }

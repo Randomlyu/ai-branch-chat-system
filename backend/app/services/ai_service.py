@@ -3,10 +3,11 @@ import logging
 import asyncio
 import json
 import threading
+import re
 from typing import Dict, Any, Optional, List, AsyncGenerator
 from datetime import datetime, date
 from pathlib import Path
-from openai import OpenAI, AsyncOpenAI
+from openai import AsyncOpenAI
 from dotenv import load_dotenv
 
 # 加载环境变量
@@ -158,11 +159,18 @@ class AIService:
     def __init__(self):
         """初始化AI服务，支持多种模型"""
         self.model_providers = {}
-        self.streaming_enabled = os.getenv("STREAMING_ENABLED", "true").lower() == "true"
         self._setup_providers()
         
     def _estimate_tokens(self, messages: List[Dict]) -> int:
-        """粗略估计消息的Token数"""
+        """
+        粗略估计消息的Token数
+        
+        Args:
+            messages: 消息列表
+            
+        Returns:
+            估计的token数量
+        """
         total_tokens = 0
         for msg in messages:
             content = msg.get("content", "")
@@ -185,7 +193,15 @@ class AIService:
         return max(50, total_tokens)  # 最少50个token
     
     def _check_token_limit(self, messages: List[Dict]) -> bool:
-        """检查Token用量是否超限"""
+        """
+        检查Token用量是否超限
+        
+        Args:
+            messages: 消息列表
+            
+        Returns:
+            是否可以发起请求
+        """
         estimated_tokens = self._estimate_tokens(messages)
         return token_tracker.can_make_request(estimated_tokens)
     
@@ -198,11 +214,6 @@ class AIService:
         
         if deepseek_api_key:
             try:
-                # 同步客户端（用于非流式调用）
-                sync_client = OpenAI(
-                    api_key=deepseek_api_key,
-                    base_url=base_url
-                )
                 # 异步客户端（用于流式调用）
                 async_client = AsyncOpenAI(
                     api_key=deepseek_api_key,
@@ -210,7 +221,7 @@ class AIService:
                 )
                 
                 self.model_providers[model_name] = {
-                    "sync_client": sync_client,
+                    "sync_client": None,  # 不再需要同步客户端
                     "async_client": async_client,
                     "model": model_name,
                     "is_real": True
@@ -228,6 +239,16 @@ class AIService:
                 "model": "mock",
                 "is_real": False
             }
+        
+        # 始终添加模拟模式，无论是否有真实API密钥
+        if "mock" not in self.model_providers:
+            self.model_providers["mock"] = {
+                "sync_client": None,
+                "async_client": None,
+                "model": "mock",
+                "is_real": False
+            }
+            logger.info(f"已添加模拟模式提供者，当前可用模型: {list(self.model_providers.keys())}")
     
     def get_available_models(self) -> list:
         """获取可用的模型列表"""
@@ -245,116 +266,6 @@ class AIService:
                 return model
         
         return models[0]
-    
-    async def chat_completion(
-        self, 
-        messages: list, 
-        model: Optional[str] = None,
-        temperature: float = 0.7,
-        max_tokens: int = 2000,
-        stream: bool = False,
-        user_id: str = None
-    ) -> Dict[str, Any]:
-        """
-        调用AI模型进行对话补全（异步版本）
-        
-        Args:
-            messages: 对话消息列表
-            model: 模型名称，为None时使用默认模型
-            temperature: 温度参数
-            max_tokens: 最大token数
-            stream: 是否使用流式响应
-            user_id: 用户ID，用于请求中断
-            
-        Returns:
-            Dict包含content, model_used, tokens等信息
-        """
-        if model is None:
-            model = self.get_default_model()
-        
-        # 检查模型是否可用
-        if model not in self.model_providers:
-            available_models = self.get_available_models()
-            if "mock" in available_models:
-                model = "mock"
-            else:
-                raise ValueError(f"模型 '{model}' 不可用。可用模型: {available_models}")
-        
-        provider = self.model_providers[model]
-        
-        # 检查用量限制
-        if not self._check_token_limit(messages):
-            raise ValueError("当日API用量已达上限，请明日再试")
-        
-        # 注册用户请求（用于中断机制）
-        if user_id:
-            request_manager.register_request(user_id)
-        
-        try:
-            # 模拟模式
-            if model == "mock" or not provider["is_real"]:
-                if stream:
-                    # 流式模拟响应
-                    return await self._mock_stream_completion(messages, user_id)
-                else:
-                    return await self._mock_chat_completion(messages)
-            
-            # 真实API调用
-            if stream:
-                # 流式响应通过生成器处理
-                raise NotImplementedError("流式响应应通过stream_chat_completion方法调用")
-            else:
-                return await self._real_chat_completion(messages, provider, temperature, max_tokens)
-        finally:
-            # 清理请求状态
-            if user_id:
-                request_manager.clear_request(user_id)
-    
-    async def _real_chat_completion(
-        self, 
-        messages: list, 
-        provider: Dict,
-        temperature: float,
-        max_tokens: int
-    ) -> Dict[str, Any]:
-        """真实API调用（非流式）"""
-        try:
-            client = provider["sync_client"]
-            model_name = provider["model"]
-            
-            response = client.chat.completions.create(
-                model=model_name,
-                messages=messages,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                stream=False
-            )
-            
-            # 提取响应
-            ai_response = response.choices[0].message.content
-            tokens_used = response.usage.total_tokens if response.usage else 0
-            
-            # 记录用量
-            if tokens_used > 0:
-                token_tracker.add_usage(tokens_used)
-            else:
-                # 如果没有返回usage，估算
-                estimated_tokens = self._estimate_tokens(messages + [{"role": "assistant", "content": ai_response}])
-                token_tracker.add_usage(estimated_tokens)
-                tokens_used = estimated_tokens
-            
-            return {
-                "content": ai_response,
-                "model_used": model_name,
-                "tokens": tokens_used,
-                "is_streaming": False
-            }
-            
-        except Exception as e:
-            logger.error(f"AI服务调用失败: {str(e)}")
-            # API调用失败时回退到模拟模式
-            logger.info("回退到模拟模式")
-            return await self._mock_chat_completion(messages)
     
     async def stream_chat_completion(
         self,
@@ -379,6 +290,11 @@ class AIService:
         """
         if model is None:
             model = self.get_default_model()
+        
+        # 映射前端发送的"模拟模式"到后端的"mock"
+        if model == "模拟模式":
+            model = "mock"
+            logger.info(f"检测到前端模拟模式请求，映射为: {model}")
         
         # 检查模型是否可用
         if model not in self.model_providers:
@@ -457,77 +373,69 @@ class AIService:
             if user_id:
                 request_manager.clear_request(user_id)
     
-    async def _mock_chat_completion(self, messages: list) -> Dict[str, Any]:
-        """模拟AI响应（用于测试）"""
-        last_message = messages[-1]["content"] if messages else "你好"
-        
-        # 简单的模拟回复
-        responses = {
-            "hello": "你好！我是AI助手，很高兴为你服务！",
-            "python": "Python是一种高级编程语言，以简洁易读的语法而闻名。",
-            "java": "Java是一种面向对象的编程语言，具有'一次编写，到处运行'的特点。",
-            "default": f"我收到了你的消息：'{last_message}'。这是一个模拟回复，请配置真实的AI API密钥。"
-        }
-        
-        content = responses.get(last_message.lower(), responses["default"])
-        
-        return {
-            "content": content,
-            "model_used": "mock",
-            "tokens": len(content) // 4,  # 粗略估算
-            "is_streaming": False
-        }
-    
-    async def _mock_stream_completion(self, messages: list, user_id: str = None) -> Dict[str, Any]:
-        """模拟流式响应（返回完整结果）"""
-        result = await self._mock_chat_completion(messages)
-        result["is_streaming"] = True
-        return result
-    
     async def _mock_stream_completion_generator(
         self, 
         messages: list, 
         user_id: str = None,
         is_fallback: bool = False
     ) -> AsyncGenerator[str, None]:
-        """模拟模式下的流式响应生成器"""
+        """
+        模拟模式下的流式响应生成器
+        
+        Args:
+            messages: 消息列表
+            user_id: 用户ID
+            is_fallback: 是否为API失败后的回退模式
+            
+        Yields:
+            SSE格式的数据块
+        """
         last_message = messages[-1]["content"] if messages else "你好"
         
+        # 统一的模拟回复内容
         if is_fallback:
-            responses = ["抱歉，真实API调用失败。", "已切换至模拟模式。", "这是模拟回复..."]
-        elif "你好" in last_message or "hello" in last_message.lower():
-            responses = ["你好！", "我是AI助手，", "很高兴为您服务。"]
-        elif "python" in last_message.lower():
-            responses = ["Python是一种", "高级编程语言，", "以简洁易读的语法而闻名。"]
-        elif "java" in last_message.lower():
-            responses = ["Java是一种", "面向对象的编程语言，", "具有'一次编写，到处运行'的特点。"]
+            # API调用失败时的回退模拟
+            response_text = f"⚠️ API调用失败，已自动切换到模拟模式。🔧 此回复仅用于功能测试。如需真实AI回复，请检查API配置。"
         else:
-            responses = [
-                f"我收到了: '{last_message[:30]}...'。",
-                "这是在模拟模式下的回复。",
-                "要获取真实AI回复，请配置API密钥。"
-            ]
+            # 正常的模拟模式回复
+            response_text = f"🤖 模拟模式回复（非真实AI模型）🔧 此回复仅用于开发测试。如需使用真实AI能力，请切换到真实模型。"
         
-        for i, chunk in enumerate(responses):
+        # 将回复文本分割成句子，模拟逐句输出
+        sentences = response_text.split('\n\n')
+        
+        for i, sentence in enumerate(sentences):
             # 检查是否应该停止
             if user_id and request_manager.should_stop(user_id):
                 break
             
-            # 模拟逐词输出效果
-            words = chunk.split()
+            # 模拟逐词输出效果，增加适当的延迟
+            words = sentence.split()
             for word in words:
-                await asyncio.sleep(0.05)  # 模拟延迟
+                if user_id and request_manager.should_stop(user_id):
+                    break
+                    
+                await asyncio.sleep(0.03)  # 稍微降低延迟，提高响应速度
                 yield f"data: {json.dumps({'content': word + ' ', 'done': False}, ensure_ascii=False)}\n\n"
             
-            # 如果是最后一块，发送完成信号
-            if i == len(responses) - 1:
-                yield f"data: {json.dumps({'content': '', 'done': True}, ensure_ascii=False)}\n\n"
+            # 在句子之间添加换行
+            if i < len(sentences) - 1:
+                yield f"data: {json.dumps({'content': '\\n\\n', 'done': False}, ensure_ascii=False)}\n\n"
+        
+        # 发送完成信号
+        yield f"data: {json.dumps({'content': '', 'done': True}, ensure_ascii=False)}\n\n"
     
     def count_tokens(self, text: str, model: str = "deepseek-chat") -> int:
         """
         估算文本的token数量
         
         Note: 这是一个简化的估算，实际应该使用对应模型的tokenizer
+        
+        Args:
+            text: 要估算的文本
+            model: 模型名称
+            
+        Returns:
+            估计的token数量
         """
         # 简化的估算：中文大约1个token=1-2个字，英文大约1个token=0.75个单词
         chinese_chars = sum(1 for c in text if '\u4e00' <= c <= '\u9fff')
@@ -541,9 +449,15 @@ class AIService:
     def generate_branch_title(self, parent_message_content: str, thread_count: int, depth: int) -> str:
         """
         生成分支标题的智能函数
-        """
-        import re
         
+        Args:
+            parent_message_content: 父消息内容
+            thread_count: 线程计数
+            depth: 分支深度
+            
+        Returns:
+            生成的分支标题
+        """
         # 去除多余空白
         content = parent_message_content.strip()
         
@@ -604,7 +518,7 @@ class AIService:
         usage.update({
             "available_models": self.get_available_models(),
             "default_model": self.get_default_model(),
-            "streaming_enabled": self.streaming_enabled
+            "streaming_enabled": True  # 现在始终为True
         })
         return usage
     

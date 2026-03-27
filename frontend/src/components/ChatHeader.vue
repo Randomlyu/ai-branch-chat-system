@@ -56,7 +56,6 @@
             v-for="model in availableModels" 
             :key="model" 
             :value="model"
-            :disabled="model === '模拟模式' && !isMockModeAvailable"
           >
             {{ getModelDisplayName(model) }}
           </option>

@@ -403,6 +403,116 @@ def update_thread_title(
     
     return thread
 
+@router.delete("/threads/{thread_id}", response_model=schemas.DeleteThreadResponse)
+def delete_thread(
+    thread_id: int,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    删除叶子线程
+    规则：1. 必须是叶子节点（没有子线程） 2. 不能是主线程（depth != 0）
+    """
+    try:
+        # 1. 验证线程存在
+        thread = db.query(models.Thread).filter(
+            models.Thread.id == thread_id
+        ).first()
+        
+        if not thread:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="线程不存在"
+            )
+        
+        # 2. 验证对话所有权
+        conversation = db.query(models.Conversation).filter(
+            models.Conversation.id == thread.conversation_id
+        ).first()
+        
+        if not conversation:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="对话不存在"
+            )
+        
+        if conversation.user_id != current_user["id"]:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="无权删除此线程"
+            )
+        
+        # 3. 检查是否是主线程（depth=0不允许删除）
+        if thread.depth == 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="主线程不允许删除"
+            )
+        
+        # 4. 检查是否是叶子节点（是否有子线程）
+        has_children = db.query(models.Thread).filter(
+            models.Thread.parent_thread_id == thread_id
+        ).first()
+        
+        if has_children:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="此线程包含子线程，无法删除。请先删除所有子线程。"
+            )
+        
+        # 5. 获取线程的所有消息ID（用于返回给前端）
+        message_ids = [
+            msg.id for msg in 
+            db.query(models.Message.id)
+            .filter(models.Message.thread_id == thread_id)
+            .all()
+        ]
+        
+        # 6. 删除线程的所有消息
+        db.query(models.Message).filter(
+            models.Message.thread_id == thread_id
+        ).delete(synchronize_session=False)
+        
+        # 7. 如果删除的是活跃线程，需要设置新的活跃线程
+        if thread.is_active:
+            # 查找同一对话中的其他线程
+            other_thread = db.query(models.Thread).filter(
+                models.Thread.conversation_id == thread.conversation_id,
+                models.Thread.id != thread_id
+            ).order_by(models.Thread.created_at.asc()).first()
+            
+            if other_thread:
+                other_thread.is_active = True
+                other_thread.updated_at = datetime.utcnow()
+            else:
+                # 如果没有其他线程，将对话标记为无活跃线程
+                # 这应该不会发生，因为主线程还在
+                pass
+        
+        # 8. 删除线程
+        db.delete(thread)
+        db.commit()
+        
+        # 9. 返回成功响应
+        return {
+            "code": 200,
+            "message": "线程删除成功",
+            "data": {
+                "deleted_thread_id": thread_id,
+                "deleted_message_ids": message_ids,
+                "parent_thread_id": thread.parent_thread_id
+            }
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(f"删除线程失败: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"删除线程失败: {str(e)}"
+        )
 
 @router.get("/threads/{thread_id}/messages", response_model=List[schemas.Message])
 def get_thread_messages(
@@ -444,129 +554,16 @@ def get_thread_messages(
 
 # ==================== 消息处理端点 ====================
 
-@router.post("/chat/", response_model=schemas.SendMessageResponse)
-async def send_message(
-    request: schemas.SendMessageRequest,
-    current_user: dict = Depends(get_current_user),  # 添加认证
-    db: Session = Depends(get_db)
-):
-    """发送消息并获取AI回复（非流式版本）"""
-    try:
-        # 1. 验证线程
-        thread = db.query(models.Thread).filter(models.Thread.id == request.thread_id).first()
-        if not thread:
-            raise HTTPException(status_code=404, detail="线程不存在")
-        
-        # 验证对话所有权
-        conversation = db.query(models.Conversation)\
-            .filter(models.Conversation.id == thread.conversation_id)\
-            .first()
-        
-        if conversation and conversation.user_id != current_user["id"]:
-            raise HTTPException(status_code=403, detail="无权在此对话中发送消息")
-        
-        # 2. 获取父消息（用于构建消息链）
-        parent_message = None
-        if request.parent_id:
-            parent_message = db.query(models.Message)\
-                .filter(models.Message.id == request.parent_id)\
-                .first()
-        
-        # 3. 创建用户消息
-        user_message = models.Message(
-            thread_id=request.thread_id,
-            role="user",
-            content=request.content,
-            parent_id=request.parent_id,
-            created_at=datetime.utcnow()
-        )
-        db.add(user_message)
-        db.commit()
-        db.refresh(user_message)
-        
-        # 4. 获取对话历史（用于上下文）
-        history_messages = db.query(models.Message)\
-            .filter(models.Message.thread_id == request.thread_id)\
-            .order_by(models.Message.created_at.asc())\
-            .all()
-        
-        # 构建AI消息格式
-        ai_messages = []
-        for msg in history_messages:
-            if msg.role == "user":
-                ai_messages.append({"role": "user", "content": msg.content})
-            else:
-                ai_messages.append({"role": "assistant", "content": msg.content})
-        
-        # 5. 调用AI服务（非流式）
-        model = request.model
-        try:
-            # 使用异步版本的chat_completion
-            ai_response = await ai_service.chat_completion(
-                messages=ai_messages,
-                model=model,
-                stream=False,
-                user_id=current_user["username"]  # 传递用户名作为用户标识
-            )
-        except ValueError as e:
-            # 处理Token用量上限错误
-            logger.warning(f"AI服务调用被限制: {str(e)}")
-            raise HTTPException(
-                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail=str(e)
-            )
-        except Exception as ai_error:
-            logger.error(f"AI服务调用失败: {str(ai_error)}")
-            # 返回一个错误回复
-            ai_response = {
-                "content": f"抱歉，AI服务暂时不可用。错误: {str(ai_error)}",
-                "model_used": "error",
-                "tokens": 0,
-                "is_streaming": False
-            }
-        
-        # 6. 创建AI回复消息
-        ai_message = models.Message(
-            thread_id=request.thread_id,
-            role="assistant",
-            content=ai_response["content"],
-            parent_id=user_message.id,
-            model_used=ai_response.get("model_used"),
-            tokens=ai_response.get("tokens"),
-            created_at=datetime.utcnow()
-        )
-        db.add(ai_message)
-        db.commit()
-        db.refresh(ai_message)
-        
-        # 7. 更新线程的活跃状态
-        thread.is_active = True
-        thread.updated_at = datetime.utcnow()
-        db.commit()
-        
-        # 8. 返回响应
-        return schemas.SendMessageResponse(
-            user_message=user_message,
-            ai_message=ai_message,
-            conversation_id=thread.conversation_id,
-            thread_id=thread.id
-        )
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        db.rollback()
-        logger.error(f"发送消息失败: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"发送消息失败: {str(e)}")
-
-
 @router.post("/chat/stream/")
 async def send_message_stream(
     request: schemas.SendMessageRequest,
     current_user: dict = Depends(get_current_user),  # 添加认证
     db: Session = Depends(get_db)
 ):
-    """发送消息并获取AI回复（流式版本）"""
+    """
+    发送消息并获取AI回复（流式版本）
+    这是唯一支持的消息发送端点
+    """
     async def event_generator():
         try:
             # 1. 验证线程
@@ -819,8 +816,8 @@ def delete_message(
             detail=f"服务器内部错误: {str(e)}"
         )
 
-@router.post("/threads/{thread_id}/messages/{message_id}/regenerate", response_model=schemas.RegenerateMessageResponse)
-async def regenerate_message(
+@router.post("/threads/{thread_id}/messages/{message_id}/regenerate")
+async def regenerate_message_stream(
     thread_id: int,
     message_id: int,
     request: schemas.RegenerateMessageRequest,
@@ -828,231 +825,182 @@ async def regenerate_message(
     db: Session = Depends(get_db)
 ):
     """
-    重新生成AI消息
+    重新生成AI消息（流式版本）
     规则：1. 必须是AI消息 2. 必须是最新消息 3. 不能被分支引用
     """
-    try:
-        # 1. 创建删除管理器
-        manager = DeletionManager(db)
+    async def stream_generator():
+        new_ai_message = None
+        new_content = ""
         
-        # 2. 验证是否可以重新生成
-        can_regenerate, message_text, regenerate_info = manager.regenerate_message(
-            ai_message_id=message_id,
-            model=request.model,
-            stream=request.stream,
-            user_id=current_user["id"]
-        )
-        
-        if not can_regenerate:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=message_text
-            )
-        
-        # 3. 获取原消息信息
-        old_ai_message = db.query(models.Message).filter(
-            models.Message.id == message_id
-        ).first()
-        
-        if not old_ai_message:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="原消息不存在"
-            )
-        
-        # 4. 获取对应的用户消息
-        user_message = db.query(models.Message).filter(
-            models.Message.id == old_ai_message.parent_id
-        ).first()
-        
-        if not user_message:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="用户消息不存在"
-            )
-        
-        # 5. 获取历史消息
-        history_messages = db.query(models.Message).filter(
-            models.Message.thread_id == thread_id,
-            models.Message.created_at <= user_message.created_at
-        ).order_by(models.Message.created_at.asc()).all()
-        
-        # 构建AI消息格式
-        ai_messages = []
-        for msg in history_messages:
-            if msg.role == "user":
-                ai_messages.append({"role": "user", "content": msg.content})
-            else:
-                ai_messages.append({"role": "assistant", "content": msg.content})
-        
-        # 6. 调用AI服务
-        model_to_use = request.model or old_ai_message.model_used
-        
-        if request.stream:
-            # 流式响应
-            async def stream_generator():
-                new_ai_message = None
-                new_content = ""
-                
-                try:
-                    # 注意：不要在生成器开始时立即删除旧消息
-                    # 先获取所有必要信息
-                    old_message_id = old_ai_message.id
-                    old_message_content = old_ai_message.content
-                    user_message_id = user_message.id
-                    
-                    # 调用AI流式服务
-                    stream_generator = ai_service.stream_chat_completion(
-                        messages=ai_messages,
-                        model=model_to_use,
-                        user_id=current_user["username"]
-                    )
-                    
-                    # 流式生成内容
-                    async for chunk in stream_generator:
-                        yield chunk
-                        
-                        # 解析chunk以获取内容
-                        if chunk.startswith("data: "):
-                            try:
-                                data_str = chunk[6:]  # 移除"data: "前缀
-                                if data_str.strip():
-                                    data = json.loads(data_str.strip())
-                                    if "content" in data and not data.get("done") and not data.get("error"):
-                                        new_content += data["content"]
-                            except json.JSONDecodeError:
-                                pass
-                    
-                    # 流式完成后，先创建新消息，再删除旧消息
-                    if new_content:
-                        # 创建新的AI消息
-                        new_ai_message = models.Message(
-                            thread_id=thread_id,
-                            role="assistant",
-                            content=new_content,
-                            parent_id=user_message_id,
-                            model_used=model_to_use,
-                            created_at=datetime.utcnow()
-                        )
-                        db.add(new_ai_message)
-                        db.commit()
-                        db.refresh(new_ai_message)
-                        
-                        # 只删除AI消息，保留用户消息
-                        success, message, delete_info = manager.delete_ai_message_only(message_id, current_user["id"])
-                        if not success:
-                          logger.error(f"删除旧AI消息失败: {message}")
-                          # 继续执行，因为我们需要创建新消息
-
-                        # 更新线程状态
-                        thread = db.query(models.Thread).filter(
-                            models.Thread.id == thread_id
-                        ).first()
-                        if thread:
-                            thread.is_active = True
-                            thread.updated_at = datetime.utcnow()
-                            db.commit()
-                        
-                        # 发送包含新消息ID的完成消息
-                        message_data = json.dumps({
-                            "content": "",
-                            "done": True,
-                            "message_id": new_ai_message.id,
-                            "user_message_id": user_message_id,
-                            "model_used": model_to_use
-                        })
-                        yield f"data: {message_data}\n\n"
-                    else:
-                        # 没有生成内容，返回错误
-                        error_data = json.dumps({
-                            "content": "重新生成失败：未生成任何内容",
-                            "error": True,
-                            "done": True
-                        })
-                        yield f"data: {error_data}\n\n"
-                        
-                except Exception as e:
-                    logger.error(f"流式重新生成失败: {str(e)}")
-                    error_data = json.dumps({
-                        "content": f"重新生成失败: {str(e)}",
-                        "error": True,
-                        "done": True
-                    })
-                    yield f"data: {error_data}\n\n"
+        try:
+            # 1. 创建删除管理器
+            manager = DeletionManager(db)
             
-            return StreamingResponse(
-                stream_generator(),
-                media_type="text/event-stream",
-                headers={
-                    "Cache-Control": "no-cache",
-                    "Connection": "keep-alive",
-                    "X-Accel-Buffering": "no"
-                }
+            # 2. 验证是否可以重新生成
+            can_regenerate, message_text, regenerate_info = manager.regenerate_message(
+                ai_message_id=message_id,
+                model=request.model,
+                stream=True,  # 总是使用流式
+                user_id=current_user["id"]
             )
             
-        else:
-            # 非流式响应
-            # 先调用AI服务
-            ai_response = await ai_service.chat_completion(
+            if not can_regenerate:
+                error_data = json.dumps({
+                    "content": message_text,
+                    "error": True,
+                    "done": True
+                })
+                yield f"data: {error_data}\n\n"
+                return
+            
+            # 3. 获取原消息信息
+            old_ai_message = db.query(models.Message).filter(
+                models.Message.id == message_id
+            ).first()
+            
+            if not old_ai_message:
+                error_data = json.dumps({
+                    "content": "原消息不存在",
+                    "error": True,
+                    "done": True
+                })
+                yield f"data: {error_data}\n\n"
+                return
+            
+            # 4. 获取对应的用户消息
+            user_message = db.query(models.Message).filter(
+                models.Message.id == old_ai_message.parent_id
+            ).first()
+            
+            if not user_message:
+                error_data = json.dumps({
+                    "content": "用户消息不存在",
+                    "error": True,
+                    "done": True
+                })
+                yield f"data: {error_data}\n\n"
+                return
+            
+            # 5. 获取历史消息
+            history_messages = db.query(models.Message).filter(
+                models.Message.thread_id == thread_id,
+                models.Message.created_at <= user_message.created_at
+            ).order_by(models.Message.created_at.asc()).all()
+            
+            # 构建AI消息格式
+            ai_messages = []
+            for msg in history_messages:
+                if msg.role == "user":
+                    ai_messages.append({"role": "user", "content": msg.content})
+                else:
+                    ai_messages.append({"role": "assistant", "content": msg.content})
+            
+            # 6. 调用AI流式服务
+            model_to_use = request.model or old_ai_message.model_used
+            
+            # 注意：不要在生成器开始时立即删除旧消息
+            # 先获取所有必要信息
+            old_message_id = old_ai_message.id
+            old_message_content = old_ai_message.content
+            user_message_id = user_message.id
+            
+            # 调用AI流式服务
+            ai_stream_generator = ai_service.stream_chat_completion(
                 messages=ai_messages,
                 model=model_to_use,
-                stream=False,
                 user_id=current_user["username"]
             )
             
-            # 创建新的AI消息
-            new_ai_message = models.Message(
-                thread_id=thread_id,
-                role="assistant",
-                content=ai_response["content"],
-                parent_id=user_message.id,
-                model_used=ai_response.get("model_used"),
-                tokens=ai_response.get("tokens"),
-                created_at=datetime.utcnow()
-            )
-            db.add(new_ai_message)
+            # 流式生成内容
+            async for chunk in ai_stream_generator:
+                yield chunk
+                
+                # 解析chunk以获取内容
+                if chunk.startswith("data: "):
+                    try:
+                        data_str = chunk[6:]  # 移除"data: "前缀
+                        if data_str.strip():
+                            data = json.loads(data_str.strip())
+                            if "content" in data and not data.get("done") and not data.get("error"):
+                                new_content += data["content"]
+                    except json.JSONDecodeError:
+                        pass
             
-            # 只删除AI消息，保留用户消息
-            success, message, delete_info = manager.delete_ai_message_only(message_id, current_user["id"])
-            if not success:
-                logger.error(f"删除旧AI消息失败: {message}")
-                # 继续执行，因为我们需要创建新消息
+            # 流式完成后，先创建新消息，再删除旧消息
+            if new_content:
+                # 创建新的AI消息
+                new_ai_message = models.Message(
+                    thread_id=thread_id,
+                    role="assistant",
+                    content=new_content,
+                    parent_id=user_message_id,
+                    model_used=model_to_use,
+                    created_at=datetime.utcnow()
+                )
+                db.add(new_ai_message)
+                db.commit()
+                db.refresh(new_ai_message)
+                
+                # 只删除AI消息，保留用户消息
+                success, message, delete_info = manager.delete_ai_message_only(message_id, current_user["id"])
+                if not success:
+                  logger.error(f"删除旧AI消息失败: {message}")
+                  # 继续执行，因为我们需要创建新消息
 
-            # 更新线程状态
-            thread = db.query(models.Thread).filter(
-                models.Thread.id == thread_id
-            ).first()
-            if thread:
-                thread.is_active = True
-                thread.updated_at = datetime.utcnow()
-            
-            db.commit()
-            db.refresh(new_ai_message)
-            
-            return {
-                "code": 200,
-                "message": "消息重新生成成功",
-                "data": {
-                    "new_message": new_ai_message,
-                    "old_message_id": message_id,
-                    "user_message_id": user_message.id
-                }
-            }
-            
-    except ValueError as e:
-        # 处理Token用量上限错误
-        logger.warning(f"AI服务调用被限制: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail=str(e)
-        )
-    except Exception as e:
-        db.rollback()
-        logger.error(f"重新生成消息失败: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"重新生成消息失败: {str(e)}"
-        )
+                # 更新线程状态
+                thread = db.query(models.Thread).filter(
+                    models.Thread.id == thread_id
+                ).first()
+                if thread:
+                    thread.is_active = True
+                    thread.updated_at = datetime.utcnow()
+                    db.commit()
+                
+                # 发送包含新消息ID的完成消息
+                message_data = json.dumps({
+                    "content": "",
+                    "done": True,
+                    "message_id": new_ai_message.id,
+                    "user_message_id": user_message_id,
+                    "model_used": model_to_use
+                })
+                yield f"data: {message_data}\n\n"
+            else:
+                # 没有生成内容，返回错误
+                error_data = json.dumps({
+                    "content": "重新生成失败：未生成任何内容",
+                    "error": True,
+                    "done": True
+                })
+                yield f"data: {error_data}\n\n"
+                
+        except ValueError as e:
+            # 处理Token用量上限错误
+            logger.warning(f"AI服务调用被限制: {str(e)}")
+            error_data = json.dumps({
+                "content": str(e),
+                "error": True,
+                "done": True
+            })
+            yield f"data: {error_data}\n\n"
+        except Exception as e:
+            logger.error(f"流式重新生成失败: {str(e)}")
+            error_data = json.dumps({
+                "content": f"重新生成失败: {str(e)}",
+                "error": True,
+                "done": True
+            })
+            yield f"data: {error_data}\n\n"
+    
+    return StreamingResponse(
+        stream_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"
+        }
+    )
 
 @router.get("/chat/usage/")
 async def get_ai_usage(
@@ -1262,116 +1210,3 @@ async def create_branch(
         db.rollback()
         logger.error(f"创建分支失败: {str(e)}")
         raise HTTPException(status_code=500, detail=f"创建分支失败: {str(e)}")
-
-# ==================== 线程删除端点 ====================
-
-@router.delete("/threads/{thread_id}", response_model=schemas.DeleteThreadResponse)
-def delete_thread(
-    thread_id: int,
-    current_user: dict = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    """
-    删除叶子线程
-    规则：1. 必须是叶子节点（没有子线程） 2. 不能是主线程（depth != 0）
-    """
-    try:
-        # 1. 验证线程存在
-        thread = db.query(models.Thread).filter(
-            models.Thread.id == thread_id
-        ).first()
-        
-        if not thread:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="线程不存在"
-            )
-        
-        # 2. 验证对话所有权
-        conversation = db.query(models.Conversation).filter(
-            models.Conversation.id == thread.conversation_id
-        ).first()
-        
-        if not conversation:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="对话不存在"
-            )
-        
-        if conversation.user_id != current_user["id"]:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="无权删除此线程"
-            )
-        
-        # 3. 检查是否是主线程（depth=0不允许删除）
-        if thread.depth == 0:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="主线程不允许删除"
-            )
-        
-        # 4. 检查是否是叶子节点（是否有子线程）
-        has_children = db.query(models.Thread).filter(
-            models.Thread.parent_thread_id == thread_id
-        ).first()
-        
-        if has_children:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="此线程包含子线程，无法删除。请先删除所有子线程。"
-            )
-        
-        # 5. 获取线程的所有消息ID（用于返回给前端）
-        message_ids = [
-            msg.id for msg in 
-            db.query(models.Message.id)
-            .filter(models.Message.thread_id == thread_id)
-            .all()
-        ]
-        
-        # 6. 删除线程的所有消息
-        db.query(models.Message).filter(
-            models.Message.thread_id == thread_id
-        ).delete(synchronize_session=False)
-        
-        # 7. 如果删除的是活跃线程，需要设置新的活跃线程
-        if thread.is_active:
-            # 查找同一对话中的其他线程
-            other_thread = db.query(models.Thread).filter(
-                models.Thread.conversation_id == thread.conversation_id,
-                models.Thread.id != thread_id
-            ).order_by(models.Thread.created_at.asc()).first()
-            
-            if other_thread:
-                other_thread.is_active = True
-                other_thread.updated_at = datetime.utcnow()
-            else:
-                # 如果没有其他线程，将对话标记为无活跃线程
-                # 这应该不会发生，因为主线程还在
-                pass
-        
-        # 8. 删除线程
-        db.delete(thread)
-        db.commit()
-        
-        # 9. 返回成功响应
-        return {
-            "code": 200,
-            "message": "线程删除成功",
-            "data": {
-                "deleted_thread_id": thread_id,
-                "deleted_message_ids": message_ids,
-                "parent_thread_id": thread.parent_thread_id
-            }
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        db.rollback()
-        logger.error(f"删除线程失败: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"删除线程失败: {str(e)}"
-        )

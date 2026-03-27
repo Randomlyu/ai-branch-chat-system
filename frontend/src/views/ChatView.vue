@@ -6,6 +6,7 @@
       :message="toast.message"
       :type="toast.type"
     />
+    
     <!-- 对话菜单（Teleport到body，避免层级问题） -->
     <Teleport to="body">
       <div 
@@ -43,6 +44,7 @@
       @confirm="confirmDelete"
       @cancel="cancelDelete"
     />
+    
     <!-- 删除消息确认对话框 -->
     <ConfirmDialog
       v-model:visible="showDeleteMessageConfirm"
@@ -55,6 +57,7 @@
       @confirm="confirmDeleteMessage"
       @cancel="cancelDeleteMessage"
     />
+    
     <!-- 重新生成消息确认对话框 -->
     <ConfirmDialog
       v-model:visible="showRegenerateConfirm"
@@ -66,18 +69,19 @@
       @confirm="confirmRegenerateMessage"
       @cancel="cancelRegenerateMessage"
     />
-<!-- 删除线程确认对话框 -->
-<ConfirmDialog
-  v-model:visible="showDeleteThreadConfirm"
-  title="确认删除分支"
-  :message="`确定要删除此子分支吗？此操作不可恢复。`"
-  confirm-text="删除"
-  cancel-text="取消"
-  danger
-  icon="warning"
-  @confirm="confirmDeleteThread"
-  @cancel="cancelDeleteThread"
-/>
+    
+    <!-- 删除线程确认对话框 -->
+    <ConfirmDialog
+      v-model:visible="showDeleteThreadConfirm"
+      title="确认删除分支"
+      :message="`确定要删除此子分支吗？此操作不可恢复。`"
+      confirm-text="删除"
+      cancel-text="取消"
+      danger
+      icon="warning"
+      @confirm="confirmDeleteThread"
+      @cancel="cancelDeleteThread"
+    />
 
     <!-- 左侧边栏：对话列表 -->
     <ConversationSidebar
@@ -133,7 +137,6 @@
       <!-- 输入区域 -->
       <MessageInput
         v-model:user-input="userInput"
-        v-model:streaming-enabled="streamingEnabled"
         :is-loading="isLoading"
         :is-streaming="isStreaming"
         :is-token-limit-reached="isTokenLimitReached"
@@ -172,17 +175,16 @@ import { ref, onMounted, nextTick, watch, computed, onBeforeUnmount } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useChatStore } from '@/stores/chat'
 import type { Conversation, Message } from '@/types/chat'
-//导入toast组件
-import AppToast from '@/components/AppToast.vue'
+
 // 导入组件
+import AppToast from '@/components/AppToast.vue'
 import ConversationSidebar from '@/components/ConversationSidebar.vue'
 import ThreadTreeSidebar from '@/components/ThreadTreeSidebar.vue'
-// 导入头部组件
 import ChatHeader from '@/components/ChatHeader.vue'
-//导入聊天组件
 import ChatMessages from '@/components/ChatMessages.vue'
-// 导入对话框组件
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
+import MessageInput from '@/components/MessageInput.vue'
+
 // 导入工具函数
 import { 
   formatNumber, 
@@ -191,9 +193,6 @@ import {
 
 // 导入组合式函数
 import { useToast } from '@/composables/useToast'
-
-// 导入输入组件
-import MessageInput from '@/components/MessageInput.vue'
 
 // ---------- 使用组合式函数 ----------
 const { toast, showToast } = useToast()
@@ -221,7 +220,6 @@ const userInput = ref('')
 const messageInputRef = ref<InstanceType<typeof MessageInput>>()
 const conversationSidebarRef = ref<InstanceType<typeof ConversationSidebar>>()
 const chatMessagesRef = ref<InstanceType<typeof ChatMessages>>()
-const streamingEnabled = ref(true)
 const isRightSidebarCollapsed = ref(false)
 const isLeftSidebarCollapsed = ref(false)
 
@@ -261,10 +259,16 @@ const isMockModeAvailable = computed(() => {
 })
 
 // ---------- 侧边栏方法 ----------
+/**
+ * 切换右侧边栏折叠状态
+ */
 const toggleRightSidebar = () => {
   isRightSidebarCollapsed.value = !isRightSidebarCollapsed.value
 }
 
+/**
+ * 切换左侧边栏折叠状态
+ */
 const toggleLeftSidebar = () => {
   isLeftSidebarCollapsed.value = !isLeftSidebarCollapsed.value
 }
@@ -280,7 +284,9 @@ const conversationMenu = ref({
   }
 })
 
-// 显示对话菜单
+/**
+ * 显示对话菜单
+ */
 const showConversationMenu = (conversation: Conversation, event: MouseEvent) => {
   event.stopPropagation()
   event.preventDefault()
@@ -298,13 +304,17 @@ const showConversationMenu = (conversation: Conversation, event: MouseEvent) => 
   }
 }
 
-// 隐藏对话菜单
+/**
+ * 隐藏对话菜单
+ */
 const hideConversationMenu = () => {
   conversationMenu.value.visible = false
   conversationMenu.value.conversation = null
 }
 
-// 处理菜单重命名点击
+/**
+ * 处理菜单重命名点击
+ */
 const handleRenameClick = () => {
   if (!conversationMenu.value.conversation) return
   
@@ -319,7 +329,9 @@ const handleRenameClick = () => {
   conversationSidebarRef.value?.startEditingTitle(conversation)
 }
 
-// 处理菜单删除点击
+/**
+ * 处理菜单删除点击
+ */
 const handleDeleteClick = () => {
   if (!conversationMenu.value.conversation) return
   
@@ -329,7 +341,9 @@ const handleDeleteClick = () => {
   handleDeleteConversation(conversation.id)
 }
 
-// 点击外部关闭菜单
+/**
+ * 点击外部关闭菜单
+ */
 const handleClickOutside = (event: MouseEvent) => {
   const target = event.target as HTMLElement
   if (!target.closest('.conversation-context-menu') && 
@@ -339,7 +353,9 @@ const handleClickOutside = (event: MouseEvent) => {
   }
 }
 
-// 对话点击处理
+/**
+ * 对话点击处理
+ */
 const handleConversationClick = async (convId: number) => {
   if (conversationMenu.value.visible) {
     hideConversationMenu()
@@ -350,13 +366,18 @@ const handleConversationClick = async (convId: number) => {
   scrollToBottom()
 }
 
+/**
+ * 创建新对话
+ */
 const createNewConversation = async () => {
   await chatStore.createConversation('新对话')
   userInput.value = ''
   scrollToBottom()
 }
 
-// 保存对话标题
+/**
+ * 保存对话标题
+ */
 const saveConversationTitle = async (conversationId: number, title: string) => {
   try {
     await chatStore.updateConversationTitle(conversationId, title)
@@ -365,7 +386,9 @@ const saveConversationTitle = async (conversationId: number, title: string) => {
   }
 }
 
-// 处理删除对话
+/**
+ * 处理删除对话
+ */
 const handleDeleteConversation = (conversationId: number) => {
   if (isStreaming.value) {
     showToast('请等待生成完成后再删除对话', 'error')
@@ -379,12 +402,18 @@ const handleDeleteConversation = (conversationId: number) => {
 }
 
 // ---------- 删除对话方法 ----------
+/**
+ * 取消删除对话
+ */
 const cancelDelete = () => {
   showDeleteConfirm.value = false
   deletingConversationId.value = null
   deletingConversationTitle.value = ''
 }
 
+/**
+ * 确认删除对话
+ */
 const confirmDelete = async () => {
   if (deletingConversationId.value !== null) {
     try {
@@ -399,16 +428,16 @@ const confirmDelete = async () => {
 }
 
 // ---------- 主聊天方法 ----------
+/**
+ * 发送消息
+ */
 const sendMessage = async () => {
   const text = userInput.value.trim()
   if (!text || isLoading.value || isTokenLimitReached.value) return
 
   try {
-    if (streamingEnabled.value) {
-      await chatStore.sendMessageStream(text)
-    } else {
-      await chatStore.sendMessage(text)
-    }
+    // 总是使用流式发送消息
+    await chatStore.sendMessageStream(text)
     
     userInput.value = ''
     nextTick(() => {
@@ -421,26 +450,39 @@ const sendMessage = async () => {
 }
 
 // ---------- 输入相关方法 ----------
+/**
+ * 获取输入框占位符
+ */
 const getInputPlaceholder = (): string => {
   return chatStore.getInputPlaceholder()
 }
 
+/**
+ * 获取发送按钮标题
+ */
 const getSendButtonTitle = (): string => {
-  return chatStore.getSendButtonTitle(userInput.value, streamingEnabled.value)
+  return chatStore.getSendButtonTitle(userInput.value)
 }
 
-// 停止生成
+/**
+ * 停止生成
+ */
 const stopGenerating = async () => {
   await chatStore.stopStreaming()
 }
 
-// 模型变更处理
-const onModelChange = () => {
-  chatStore.setCurrentModel(currentModel.value)
-  showToast(`已切换到模型: ${getModelDisplayName(currentModel.value)}`, 'success')
+/**
+ * 模型变更处理
+ */
+const onModelChange = (newModel: string) => {
+  chatStore.setCurrentModel(newModel)
+  showToast(`已切换到模型: ${getModelDisplayName(newModel)}`, 'success')
 }
 
 // ---------- 分支相关方法 ----------
+/**
+ * 从消息创建分支
+ */
 const createBranchFromMessage = async (messageId: number) => {
   if (isStreaming.value) {
     showToast('请等待当前生成完成', 'error')
@@ -494,6 +536,9 @@ const createBranchFromMessage = async (messageId: number) => {
   }
 }
 
+/**
+ * 切换线程
+ */
 const switchThread = async (threadId: number) => {
   if (isStreaming.value) {
     showToast('请等待生成完成后再切换', 'error')
@@ -503,6 +548,9 @@ const switchThread = async (threadId: number) => {
   scrollToBottom()
 }
 
+/**
+ * 刷新线程树
+ */
 const refreshThreadTree = () => {
   if (isStreaming.value) {
     showToast('请等待生成完成后再刷新', 'error')
@@ -511,12 +559,17 @@ const refreshThreadTree = () => {
   chatStore.fetchThreadTree()
 }
 
+/**
+ * 处理线程被删除
+ */
 const onThreadDeleted = async (threadId: number, parentThreadId?: number | null) => {
   console.log(`线程 ${threadId} 已被删除，父线程ID: ${parentThreadId}`)
   await chatStore.fetchThreadTree()
 }
 
-// 处理删除线程请求
+/**
+ * 处理删除线程请求
+ */
 const handleRequestDeleteThread = (payload: { 
   threadId: number; 
   threadTitle: string;
@@ -546,7 +599,9 @@ const handleRequestDeleteThread = (payload: {
   showDeleteThreadConfirm.value = true
 }
 
-// 确认删除线程
+/**
+ * 确认删除线程
+ */
 const confirmDeleteThread = async () => {
   if (deletingThreadInfo.value.threadId === null) {
     return
@@ -575,7 +630,9 @@ const confirmDeleteThread = async () => {
   }
 }
 
-// 取消删除线程
+/**
+ * 取消删除线程
+ */
 const cancelDeleteThread = () => {
   showDeleteThreadConfirm.value = false
   deletingThreadInfo.value = {
@@ -586,12 +643,16 @@ const cancelDeleteThread = () => {
 }
 
 // ---------- 消息操作方法 ----------
-// 包装 isMessageBranchingPoint 方法用于传递给子组件
+/**
+ * 检查消息是否为分支点
+ */
 const isMessageBranchingPoint = (messageId: number): boolean => {
   return chatStore.isMessageBranchingPoint(messageId)
 }
 
-//复制消息
+/**
+ * 复制消息
+ */
 const copyMessage = async (content: string) => {
   const success = await chatStore.copyToClipboard(content)
   if (success) {
@@ -601,7 +662,9 @@ const copyMessage = async (content: string) => {
   }
 }
 
-//重新生成消息
+/**
+ * 重新生成消息
+ */
 const regenerateMessage = async (messageId: number) => {
   // 验证消息是否存在
   try {
@@ -634,7 +697,9 @@ const regenerateMessage = async (messageId: number) => {
   showRegenerateConfirm.value = true
 }
 
-// 确认重新生成消息
+/**
+ * 确认重新生成消息
+ */
 const confirmRegenerateMessage = async () => {
   if (regeneratingMessageId.value === null) {
     return
@@ -649,8 +714,7 @@ const confirmRegenerateMessage = async () => {
     const result = await chatStore.regenerateMessage(
       chatStore.currentThread?.id!,
       messageId,
-      chatStore.currentModel,
-      true
+      chatStore.currentModel
     )
     
     if (result.success) {
@@ -665,13 +729,17 @@ const confirmRegenerateMessage = async () => {
   }
 }
 
-// 取消重新生成消息
+/**
+ * 取消重新生成消息
+ */
 const cancelRegenerateMessage = () => {
   showRegenerateConfirm.value = false
   regeneratingMessageId.value = null
 }
 
-// 删除消息
+/**
+ * 删除消息
+ */
 const deleteMessage = async (messageId: number) => {
   if (isStreaming.value) {
     showToast('请等待当前生成完成', 'error')
@@ -701,7 +769,9 @@ const deleteMessage = async (messageId: number) => {
   showDeleteMessageConfirm.value = true
 }
 
-// 验证消息是否存在
+/**
+ * 验证消息是否存在
+ */
 const validateMessageExists = async (messageId: number): Promise<boolean> => {
   if (!currentThread.value) {
     console.warn('验证消息失败：当前没有活跃的线程')
@@ -724,7 +794,9 @@ const validateMessageExists = async (messageId: number): Promise<boolean> => {
   }
 }
 
-// 确认删除消息
+/**
+ * 确认删除消息
+ */
 const confirmDeleteMessage = async () => {
   if (deletingMessageId.value === null) {
     return
@@ -755,13 +827,18 @@ const confirmDeleteMessage = async () => {
   }
 }
 
-// 取消删除消息
+/**
+ * 取消删除消息
+ */
 const cancelDeleteMessage = () => {
   showDeleteMessageConfirm.value = false
   deletingMessageId.value = null
 }
 
 // ---------- 工具函数 ----------
+/**
+ * 滚动到底部
+ */
 const scrollToBottom = () => {
   chatMessagesRef.value?.scrollToBottom()
 }

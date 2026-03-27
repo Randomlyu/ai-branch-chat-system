@@ -28,19 +28,6 @@
           @input="autoResizeTextarea"
         ></textarea>
         <div class="send-controls">
-          <!-- 流式控制开关 -->
-          <div class="streaming-toggle" title="流式响应">
-            <input
-              type="checkbox"
-              id="streaming-toggle"
-              v-model="localStreamingEnabled"
-              :disabled="isLoading || isStreaming"
-              class="toggle-checkbox"
-            />
-            <label for="streaming-toggle" class="toggle-label">
-              <span class="toggle-text">流式</span>
-            </label>
-          </div>
           <button
             class="btn-send"
             @click="handleButtonClick"
@@ -61,8 +48,6 @@
     <div class="input-footer">
       <div class="model-info">
         当前模型: <strong>{{ formattedModelName }}</strong>
-        <span v-if="localStreamingEnabled" class="streaming-badge">流式</span>
-        <span v-else class="streaming-badge off">非流式</span>
       </div>
       <div class="input-hints">
         <span class="hint">对话ID: {{ conversationId || '--' }}</span>
@@ -96,8 +81,6 @@ interface AIUsage {
 const props = defineProps<{
   // 输入文本
   userInput: string
-  // 流式开关
-  streamingEnabled: boolean
   // 状态
   isLoading: boolean
   isStreaming: boolean
@@ -120,7 +103,6 @@ const props = defineProps<{
 // 定义事件
 const emit = defineEmits<{
   'update:userInput': [value: string]
-  'update:streamingEnabled': [value: boolean]
   send: []
   stop: []
 }>()
@@ -129,11 +111,6 @@ const emit = defineEmits<{
 const localUserInput = computed({
   get: () => props.userInput,
   set: (value) => emit('update:userInput', value)
-})
-
-const localStreamingEnabled = computed({
-  get: () => props.streamingEnabled,
-  set: (value) => emit('update:streamingEnabled', value)
 })
 
 // 计算属性
@@ -151,13 +128,18 @@ const isButtonEnabled = computed(() => {
 // 模板引用
 const inputTextarea = ref<HTMLTextAreaElement>()
 
-// 方法
+/**
+ * 处理发送消息
+ */
 const handleSend = () => {
   if (props.canSend) {
     emit('send')
   }
 }
 
+/**
+ * 处理按钮点击
+ */
 const handleButtonClick = () => {
   if (props.isStreaming) {
     // 流式生成时，触发停止
@@ -168,6 +150,9 @@ const handleButtonClick = () => {
   }
 }
 
+/**
+ * 处理Shift+Enter换行
+ */
 const handleShiftEnter = () => {
   localUserInput.value += '\n'
   // 调整文本框高度
@@ -176,6 +161,9 @@ const handleShiftEnter = () => {
   })
 }
 
+/**
+ * 自动调整文本框高度
+ */
 const autoResizeTextarea = () => {
   const textarea = inputTextarea.value
   if (textarea) {
@@ -186,17 +174,26 @@ const autoResizeTextarea = () => {
 
 // 暴露方法供父组件调用
 defineExpose({
+  /**
+   * 聚焦输入框
+   */
   focusInput: () => {
     nextTick(() => {
       inputTextarea.value?.focus()
     })
   },
+  /**
+   * 重置文本框高度
+   */
   resetTextareaHeight: () => {
     const textarea = inputTextarea.value
     if (textarea) {
       textarea.style.height = 'auto'
     }
   },
+  /**
+   * 获取输入框的值
+   */
   getInputValue: () => localUserInput.value
 })
 
@@ -281,41 +278,6 @@ watch(() => props.isStreaming, (newVal) => {
   align-items: center;
   gap: 8px;
   margin-bottom: 8px;
-}
-
-/* 流式控制开关 */
-.streaming-toggle {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-right: 4px;
-}
-
-.toggle-checkbox {
-  display: none;
-}
-
-.toggle-label {
-  display: flex;
-  align-items: center;
-  cursor: pointer;
-  padding: 4px 8px;
-  border-radius: 6px;
-  background: rgba(0, 0, 0, 0.05);
-  border: 1px solid rgba(0, 0, 0, 0.1);
-  transition: all 0.2s ease;
-  user-select: none;
-}
-
-.toggle-checkbox:checked + .toggle-label {
-  background: rgba(16, 185, 129, 0.1);
-  border-color: rgba(16, 185, 129, 0.3);
-  color: #10b981;
-}
-
-.toggle-text {
-  font-size: 12px;
-  font-weight: 500;
 }
 
 /* 发送按钮 */
@@ -428,12 +390,6 @@ watch(() => props.isStreaming, (newVal) => {
   font-weight: 600;
   margin-left: 6px;
   border: 1px solid rgba(16, 185, 129, 0.2);
-}
-
-.streaming-badge.off {
-  background: rgba(156, 163, 175, 0.1);
-  color: #6b7280;
-  border-color: rgba(156, 163, 175, 0.2);
 }
 
 /* 图标 */
