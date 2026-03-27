@@ -10,7 +10,13 @@ import type {
   ThreadUpdate,
   RegenerateMessageRequest,
   ThreadDeleteInfo,
-  CreateBranchRequest
+  CreateBranchRequest,
+  // ===== 新增导入 =====
+  CheckMessageEditableRequest,
+  CheckMessageEditableResponse,
+  UpdateUserMessageRequest,
+  UpdateUserMessageResponse
+  // ===================
 } from '@/types/chat'
 
 // ========== 创建axios实例 ==========
@@ -316,6 +322,28 @@ export const regenerateMessageStream = async (
   await sendStreamRequest(`/threads/${threadId}/messages/${messageId}/regenerate`, data, config)
 }
 
+// ===== 新增：消息编辑相关API =====
+/**
+ * 检查消息是否可编辑
+ */
+export const checkMessageEditable = async (
+  messageId: number
+): Promise<ApiResponse<CheckMessageEditableResponse>> => {
+  return apiClient.get(`/messages/${messageId}/editable`)
+}
+
+/**
+ * 流式更新用户消息
+ */
+export const updateUserMessageStream = async (
+  messageId: number,
+  data: UpdateUserMessageRequest,
+  config: StreamRequestConfig
+): Promise<void> => {
+  await sendStreamRequest(`/messages/${messageId}/update`, data, config)
+}
+// ================================
+
 // ========== AI相关API ==========
 /**
  * 停止生成
@@ -367,6 +395,10 @@ export default {
   sendMessageStream,  // 流式发送消息
   deleteMessage,
   regenerateMessageStream,  // 流式重新生成消息
+  // ===== 新增：消息编辑相关API =====
+  checkMessageEditable,
+  updateUserMessageStream,
+  // ================================
   
   // AI相关
   stopGeneration,

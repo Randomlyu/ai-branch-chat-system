@@ -1210,3 +1210,341 @@ async def create_branch(
         db.rollback()
         logger.error(f"创建分支失败: {str(e)}")
         raise HTTPException(status_code=500, detail=f"创建分支失败: {str(e)}")
+
+# ===== 新增：消息编辑相关端点 =====
+@router.get("/messages/{message_id}/editable")
+def check_message_editable(
+    message_id: int,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    检查消息是否可编辑
+    规则：1. 必须是用户消息 2. 必须是最新用户消息 3. 不能被分支引用
+    """
+    try:
+        # 1. 验证消息存在
+        message = db.query(models.Message).filter(
+            models.Message.id == message_id
+        ).first()
+        
+        if not message:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="消息不存在"
+            )
+        
+        # 2. 验证消息所有权
+        # 通过线程和对话验证所有权
+        thread = db.query(models.Thread).filter(
+            models.Thread.id == message.thread_id
+        ).first()
+        
+        if not thread:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="线程不存在"
+            )
+        
+        conversation = db.query(models.Conversation).filter(
+            models.Conversation.id == thread.conversation_id
+        ).first()
+        
+        if not conversation:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="对话不存在"
+            )
+        
+        if conversation.user_id != current_user["id"]:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="无权编辑此消息"
+            )
+        
+        # 3. 验证是否是用户消息
+        if message.role != "user":
+            return {
+                "code": 200,
+                "message": "检查完成",
+                "data": {
+                    "is_editable": False,
+                    "reason": "只能编辑用户消息"
+                }
+            }
+        
+        # 4. 检查是否被分支引用
+        # 查找是否有线程以此消息为父消息
+        branch_thread = db.query(models.Thread).filter(
+            models.Thread.parent_message_id == message_id
+        ).first()
+        
+        if branch_thread:
+            return {
+                "code": 200,
+                "message": "检查完成",
+                "data": {
+                    "is_editable": False,
+                    "reason": "此消息已被分支引用，无法编辑"
+                }
+            }
+        
+        # 5. 检查是否是最新用户消息
+        # 获取该线程的所有用户消息
+        user_messages = db.query(models.Message).filter(
+            models.Message.thread_id == message.thread_id,
+            models.Message.role == "user"
+        ).order_by(models.Message.created_at.desc()).all()
+        
+        if not user_messages or user_messages[0].id != message_id:
+            return {
+                "code": 200,
+                "message": "检查完成",
+                "data": {
+                    "is_editable": False,
+                    "reason": "只能编辑最新的用户消息"
+                }
+            }
+        
+        # 6. 检查此用户消息是否有AI回复
+        ai_reply = db.query(models.Message).filter(
+            models.Message.thread_id == message.thread_id,
+            models.Message.role == "assistant",
+            models.Message.parent_id == message_id
+        ).first()
+        
+        # 如果AI回复已被分支引用，则不能编辑
+        if ai_reply:
+            ai_reply_branch = db.query(models.Thread).filter(
+                models.Thread.parent_message_id == ai_reply.id
+            ).first()
+            
+            if ai_reply_branch:
+                return {
+                    "code": 200,
+                    "message": "检查完成",
+                    "data": {
+                        "is_editable": False,
+                        "reason": "此消息对应的AI回复已被分支引用，无法编辑"
+                    }
+                }
+        
+        # 7. 所有检查通过，消息可编辑
+        return {
+            "code": 200,
+            "message": "检查完成",
+            "data": {
+                "is_editable": True,
+                "reason": "消息可编辑"
+            }
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"检查消息可编辑性失败: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"检查消息可编辑性失败: {str(e)}"
+        )
+
+
+@router.post("/messages/{message_id}/update")
+async def update_user_message_stream(
+    message_id: int,
+    request: schemas.UpdateUserMessageRequest,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    更新用户消息（流式版本）
+    流程：1. 验证消息可编辑 2. 更新用户消息 3. 删除原有AI回复 4. 重新生成AI回复
+    """
+    async def event_generator():
+        try:
+            # 1. 验证消息存在
+            user_message = db.query(models.Message).filter(
+                models.Message.id == message_id
+            ).first()
+            
+            if not user_message:
+                error_data = json.dumps({
+                    "content": "消息不存在",
+                    "error": True,
+                    "done": True
+                })
+                yield f"data: {error_data}\n\n"
+                return
+            
+            # 2. 验证消息所有权
+            thread = db.query(models.Thread).filter(
+                models.Thread.id == user_message.thread_id
+            ).first()
+            
+            if not thread:
+                error_data = json.dumps({
+                    "content": "线程不存在",
+                    "error": True,
+                    "done": True
+                })
+                yield f"data: {error_data}\n\n"
+                return
+            
+            conversation = db.query(models.Conversation).filter(
+                models.Conversation.id == thread.conversation_id
+            ).first()
+            
+            if not conversation:
+                error_data = json.dumps({
+                    "content": "对话不存在",
+                    "error": True,
+                    "done": True
+                })
+                yield f"data: {error_data}\n\n"
+                return
+            
+            if conversation.user_id != current_user["id"]:
+                error_data = json.dumps({
+                    "content": "无权编辑此消息",
+                    "error": True,
+                    "done": True
+                })
+                yield f"data: {error_data}\n\n"
+                return
+            
+            # 3. 验证消息可编辑性（复用检查逻辑）
+            response = check_message_editable(message_id, current_user, db)
+            response_data = response["data"]
+            
+            if not response_data["is_editable"]:
+                error_data = json.dumps({
+                    "content": response_data["reason"] or "消息不可编辑",
+                    "error": True,
+                    "done": True
+                })
+                yield f"data: {error_data}\n\n"
+                return
+            
+            # 4. 更新用户消息内容
+            old_content = user_message.content
+            user_message.content = request.content
+            user_message.created_at = datetime.utcnow()  # 更新时间戳
+            db.commit()
+            
+            # 5. 查找并删除原有的AI回复（如果有的话）
+            old_ai_message = None
+            ai_reply = db.query(models.Message).filter(
+                models.Message.thread_id == user_message.thread_id,
+                models.Message.role == "assistant",
+                models.Message.parent_id == message_id
+            ).first()
+            
+            if ai_reply:
+                old_ai_message = ai_reply
+                # 删除AI回复
+                db.delete(ai_reply)
+                db.commit()
+            
+            # 6. 获取历史消息（到被编辑的用户消息为止）
+            history_messages = db.query(models.Message).filter(
+                models.Message.thread_id == user_message.thread_id,
+                models.Message.created_at <= user_message.created_at
+            ).order_by(models.Message.created_at.asc()).all()
+            
+            # 构建AI消息格式
+            ai_messages = []
+            for msg in history_messages:
+                if msg.id == message_id:
+                    # 使用更新后的内容
+                    ai_messages.append({"role": "user", "content": request.content})
+                elif msg.role == "user":
+                    ai_messages.append({"role": "user", "content": msg.content})
+                else:
+                    ai_messages.append({"role": "assistant", "content": msg.content})
+            
+            # 7. 调用AI流式服务重新生成回复
+            model = request.model
+            ai_response_content = ""
+            is_interrupted = False
+            
+            stream_generator = ai_service.stream_chat_completion(
+                messages=ai_messages,
+                model=model,
+                user_id=current_user["username"]
+            )
+            
+            try:
+                async for chunk in stream_generator:
+                    yield chunk
+                    
+                    # 解析chunk以获取内容
+                    if chunk.startswith("data: "):
+                        try:
+                            data_str = chunk[6:]
+                            if data_str.strip():
+                                data = json.loads(data_str.strip())
+                                if "content" in data and not data.get("done") and not data.get("error"):
+                                    ai_response_content += data["content"]
+                        except json.JSONDecodeError:
+                            pass
+            except Exception as e:
+                logger.info(f"流式生成被中断: {str(e)}")
+                is_interrupted = True
+            
+            # 8. 创建新的AI回复消息
+            if is_interrupted:
+                ai_response_content = "您中断了生成"
+            
+            new_ai_message = models.Message(
+                thread_id=user_message.thread_id,
+                role="assistant",
+                content=ai_response_content,
+                parent_id=user_message.id,
+                model_used=model or ai_service.get_default_model(),
+                created_at=datetime.utcnow()
+            )
+            db.add(new_ai_message)
+            db.flush()  # 刷新以获取消息ID
+            
+            # 9. 更新线程状态
+            thread.is_active = True
+            thread.updated_at = datetime.utcnow()
+            db.commit()
+            
+            # 10. 发送完成消息
+            message_data = json.dumps({
+                "content": "",
+                "done": True,
+                "message_id": new_ai_message.id,
+                "user_message_id": user_message.id,
+                "model_used": model or ai_service.get_default_model(),
+                "is_interrupted": is_interrupted
+            })
+            yield f"data: {message_data}\n\n"
+            
+        except HTTPException as e:
+            error_data = json.dumps({
+                "content": f"HTTP错误: {e.detail}",
+                "error": True,
+                "done": True
+            })
+            yield f"data: {error_data}\n\n"
+        except Exception as e:
+            logger.error(f"更新用户消息失败: {str(e)}")
+            error_data = json.dumps({
+                "content": f"服务器错误: {str(e)}",
+                "error": True,
+                "done": True
+            })
+            yield f"data: {error_data}\n\n"
+    
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"
+        }
+    )
+# ===========================================

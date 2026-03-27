@@ -121,15 +121,11 @@
         :is-loading="isLoading"
         :streaming-model="streamingModel"
         :is-message-branching-point="isMessageBranchingPoint"
-        :can-regenerate-message="chatStore.validateMessageForRegeneration"
-        :get-regenerate-button-title="(msg: Message) => chatStore.getMessageActionTitles(msg).regenerate"
-        :can-create-branch="chatStore.validateMessageForBranching"
-        :get-branch-button-title="(msg: Message) => chatStore.getMessageActionTitles(msg).branch"
-        :get-delete-button-title="(msg: Message) => chatStore.getMessageActionTitles(msg).delete"
         @copy="copyMessage"
         @regenerate="regenerateMessage"
         @branch="createBranchFromMessage"
         @delete="deleteMessage"
+        @edit="editMessage"
         @stop="stopGenerating"
         ref="chatMessagesRef"
       />
@@ -149,8 +145,10 @@
         :send-button-title="getSendButtonTitle()"
         :formatted-model-name="getModelDisplayName(currentModel)"
         :remaining-tokens="aiUsage ? formatNumber(aiUsage.remaining_tokens) : ''"
+        :is-edit-mode="isEditMode"
         @send="sendMessage"
         @stop="stopGenerating"
+        @cancel-edit="cancelEditing"
         ref="messageInputRef"
       />
     </main>
@@ -174,7 +172,7 @@
 import { ref, onMounted, nextTick, watch, computed, onBeforeUnmount } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useChatStore } from '@/stores/chat'
-import type { Conversation, Message } from '@/types/chat'
+import type { Conversation } from '@/types/chat'
 
 // 导入组件
 import AppToast from '@/components/AppToast.vue'
@@ -212,7 +210,11 @@ const {
   aiUsage,
   availableModels,
   currentModel,
-  isTokenLimitReached
+  isTokenLimitReached,
+  // ===== 新增：消息编辑相关状态 =====
+  isEditMode,
+  editingMessage
+  // ================================
 } = storeToRefs(chatStore)
 
 // ---------- 本地响应式数据 ----------
@@ -436,9 +438,10 @@ const sendMessage = async () => {
   if (!text || isLoading.value || isTokenLimitReached.value) return
 
   try {
-    // 总是使用流式发送消息
+    // 调用store的发送消息方法（在编辑模式下会自动调用更新方法）
     await chatStore.sendMessageStream(text)
     
+    // 清空输入框
     userInput.value = ''
     nextTick(() => {
       scrollToBottom()
@@ -835,6 +838,75 @@ const cancelDeleteMessage = () => {
   deletingMessageId.value = null
 }
 
+// ===== 新增：消息编辑相关方法 =====
+/**
+ * 编辑消息
+ */
+const editMessage = async (messageId: number) => {
+  if (isStreaming.value) {
+    showToast('请等待当前生成完成', 'error')
+    return
+  }
+  
+  // 验证消息是否存在
+  try {
+    const isValid = await validateMessageExists(messageId)
+    if (!isValid) {
+      showToast('消息不存在或已被删除', 'error')
+      return
+    }
+  } catch (error) {
+    console.error('验证消息失败:', error)
+    showToast('验证消息失败，请稍后重试', 'error')
+    return
+  }
+  
+  const message = messages.value.find(msg => msg.id === messageId)
+  if (!message) {
+    showToast('消息不存在', 'error')
+    return
+  }
+  
+  // 使用 store 的验证方法
+  const validation = chatStore.validateMessageOperation(messageId, 'edit')
+  if (!validation.can) {
+    showToast(validation.reason || '无法编辑此消息', 'error')
+    return
+  }
+  
+  try {
+    // 调用store的startEditingMessage方法
+    const result = await chatStore.startEditingMessage(message)
+    
+    if (result.success) {
+      // 将消息内容设置到输入框
+      userInput.value = message.content
+      showToast('正在编辑消息，编辑完成后点击"更新"按钮')
+      
+      // 聚焦输入框
+      nextTick(() => {
+        messageInputRef.value?.focusInput()
+      })
+    } else {
+      showToast(result.error || '无法开始编辑消息', 'error')
+    }
+  } catch (error: unknown) {
+    console.error('编辑消息失败:', error)
+    const errorMsg = error instanceof Error ? error.message : '编辑消息失败'
+    showToast(errorMsg, 'error')
+  }
+}
+
+/**
+ * 取消编辑
+ */
+const cancelEditing = () => {
+  chatStore.cancelEditing()
+  userInput.value = ''
+  showToast('已取消编辑')
+}
+// ===================================
+
 // ---------- 工具函数 ----------
 /**
  * 滚动到底部
@@ -880,6 +952,17 @@ watch(messages, () => {
     scrollToBottom()
   })
 }, { deep: true })
+
+// 监听编辑状态变化
+watch(isEditMode, (newVal) => {
+  if (newVal && editingMessage.value) {
+    // 进入编辑模式，将消息内容设置到输入框
+    userInput.value = editingMessage.value.content
+  } else {
+    // 退出编辑模式，清空输入框
+    userInput.value = ''
+  }
+})
 </script>
 
 <style scoped>

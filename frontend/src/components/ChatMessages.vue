@@ -11,6 +11,8 @@
         :branch-title="getBranchButtonTitle(msg)"
         :is-branching-point="checkIsMessageBranchingPoint(msg.id)"
         :delete-title="getDeleteButtonTitle(msg)"
+        :can-edit="canEditMessage(msg)"
+        :edit-title="getEditButtonTitle(msg)"
         :formatted-time="formatTime(msg.created_at)"
         :formatted-content="formatMessage(msg.content)"
         :formatted-model-name="msg.model_used ? getModelDisplayName(msg.model_used) : ''"
@@ -18,6 +20,7 @@
         @regenerate="handleRegenerateMessage"
         @branch="handleCreateBranch"
         @delete="handleDeleteMessage"
+        @edit="handleEditMessage"
       />
     </div>
     
@@ -56,6 +59,7 @@ const emit = defineEmits<{
   'regenerate': [messageId: number]
   'branch': [messageId: number]
   'delete': [messageId: number]
+  'edit': [messageId: number]
   'stop': []
 }>()
 
@@ -150,10 +154,71 @@ const getDeleteButtonTitle = (msg: Message) => {
   return '删除此AI回复及其对应的用户提问'
 }
 
+// ===== 新增：用户消息编辑相关方法 =====
+const canEditMessage = (msg: Message): boolean => {
+  if (props.isStreaming) return false
+  if (msg.role !== 'user') return false
+  
+  // 检查是否是最新的用户消息
+  const latestUserMessage = getLatestUserMessage()
+  if (!latestUserMessage || latestUserMessage.id !== msg.id) {
+    return false
+  }
+  
+  // 检查是否被分支引用
+  if (checkIsMessageBranchingPoint(msg.id)) {
+    return false
+  }
+  
+  return true
+}
+
+const getEditButtonTitle = (msg: Message): string => {
+  if (props.isStreaming) {
+    return '请等待生成完成'
+  }
+  
+  if (msg.role !== 'user') {
+    return '只能编辑用户消息'
+  }
+  
+  // 检查是否是最新的用户消息
+  const latestUserMessage = getLatestUserMessage()
+  if (!latestUserMessage) {
+    return '当前没有消息'
+  }
+  
+  if (msg.id !== latestUserMessage.id) {
+    return '只能编辑最新的用户消息'
+  }
+  
+  // 检查是否被分支引用
+  if (checkIsMessageBranchingPoint(msg.id)) {
+    return '此消息已被分支引用，无法编辑'
+  }
+  
+  return '编辑此消息'
+}
+// ====================================
+
 // 工具方法
 const getLatestMessage = (): Message | null => {
   if (props.messages.length === 0) return null
   return props.messages[props.messages.length - 1] || null
+}
+
+// 获取最新的用户消息
+const getLatestUserMessage = (): Message | null => {
+  if (props.messages.length === 0) return null
+  
+  // 从后往前查找第一个用户消息
+  for (let i = props.messages.length - 1; i >= 0; i--) {
+    const message = props.messages[i]
+    if (message?.role === 'user') {
+      return message
+    }
+  }
+  return null
 }
 
 // 检查消息是否为分支点
@@ -181,6 +246,12 @@ const handleCreateBranch = (messageId: number) => {
 const handleDeleteMessage = (messageId: number) => {
   emit('delete', messageId)
 }
+
+// ===== 新增：编辑消息事件处理 =====
+const handleEditMessage = (messageId: number) => {
+  emit('edit', messageId)
+}
+// ================================
 
 // 滚动到底部
 const scrollToBottom = () => {

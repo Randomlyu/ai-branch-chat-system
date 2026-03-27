@@ -157,3 +157,36 @@ class RegenerateMessageData(BaseModel):
     new_message: Message
     old_message_id: int
     user_message_id: int
+
+# ===== 新增：消息编辑相关模型 =====
+class CheckMessageEditableRequest(BaseModel):
+    """检查消息是否可编辑的请求模型"""
+    message_id: int
+
+
+class CheckMessageEditableResponse(BaseModel):
+    """检查消息是否可编辑的响应模型"""
+    is_editable: bool
+    reason: Optional[str] = None
+
+
+class UpdateUserMessageRequest(BaseModel):
+    """更新用户消息的请求模型"""
+    content: str
+    model: Optional[str] = None
+
+
+class UpdateUserMessageResponse(BaseModel):
+    """更新用户消息的响应模型"""
+    code: int
+    message: str
+    data: Optional[Dict[str, Any]] = None
+
+
+class UpdateUserMessageData(BaseModel):
+    """更新用户消息数据模型"""
+    updated_user_message: Message
+    new_ai_message: Message
+    conversation_id: int
+    thread_id: int
+# ===================================

@@ -11,7 +11,11 @@ import type {
   StreamResponseData,
   AIUsageInfo,
   DeleteMessageResponse,
-  ThreadDeleteInfo
+  ThreadDeleteInfo,
+  // ===== 新增导入 =====
+  CheckMessageEditableResponse,
+  UpdateUserMessageResponse
+  // ===================
 } from '@/types/chat'
 import * as chatApi from '@/api/chat'
 
@@ -32,6 +36,13 @@ export const useChatStore = defineStore('chat', () => {
   const aiUsage = ref<AIUsageInfo | null>(null)
   const availableModels = ref<string[]>([])
   const currentModel = ref<string>('')
+
+  // ===== 新增：消息编辑相关状态 =====
+  const editingMessage = ref<Message | null>(null)  // 当前正在编辑的消息
+  const isEditMode = ref(false)  // 是否处于编辑模式
+  const cancelEditMode = ref<() => void>(() => {})  // 取消编辑的函数
+  const inputPlaceholder = ref<string>('发送消息给AI... (Shift+Enter换行，Enter发送)')
+  // ================================
 
   // ========== 计算属性 ==========
   const threadPath = computed(() => {
@@ -65,6 +76,56 @@ export const useChatStore = defineStore('chat', () => {
     if (messages.value.length === 0) return null
     return messages.value[messages.value.length - 1]
   })
+
+  // ===== 新增：消息编辑相关计算属性 =====
+  // 获取最新的用户消息
+  const latestUserMessage = computed(() => {
+    if (messages.value.length === 0) return null
+    
+    // 从后往前查找第一个用户消息
+    for (let i = messages.value.length - 1; i >= 0; i--) {
+      const message = messages.value[i]
+      if (message?.role === 'user') {
+        return message
+      }
+    }
+    return null
+  })
+
+  // 检查当前是否有消息正在被编辑
+  const isEditing = computed(() => {
+    return isEditMode.value && editingMessage.value !== null
+  })
+
+  // 获取可编辑的消息（从最新开始向前查找）
+  const editableMessage = computed(() => {
+    if (messages.value.length === 0) return null
+    
+    // 从后往前查找第一个用户消息
+    for (let i = messages.value.length - 1; i >= 0; i--) {
+      const message = messages.value[i]
+      if (message?.role === 'user') {
+        return message
+      }
+    }
+    return null
+  })
+
+  // 检查消息是否可编辑
+  const canEditMessage = computed(() => (message: Message) => {
+    if (!message) return false
+    if (message.role !== 'user') return false
+    if (isStreaming.value) return false
+    
+    // 检查是否是最新的用户消息
+    const latestUserMsg = latestUserMessage.value
+    if (!latestUserMsg || latestUserMsg.id !== message.id) {
+      return false
+    }
+    
+    return true
+  })
+  // ================================
 
   // ========== 基础动作 ==========
   /**
@@ -127,6 +188,9 @@ export const useChatStore = defineStore('chat', () => {
         messages.value = []
         currentThread.value = null
       }
+      
+      // 退出编辑模式
+      cancelEditing()
       
       // 获取分支树
       await fetchThreadTree()
@@ -214,6 +278,9 @@ export const useChatStore = defineStore('chat', () => {
         conversations.value.splice(index, 1)
       }
       
+      // 退出编辑模式
+      cancelEditing()
+      
       // 如果删除的是当前对话，需要切换到其他对话或清空
       if (currentConversation.value?.id === conversationId) {
         if (conversations.value.length > 0) {
@@ -255,6 +322,20 @@ export const useChatStore = defineStore('chat', () => {
       isLoading.value = true
       const response = await chatApi.getThreadMessages(currentThread.value.id)
       messages.value = response.data
+      
+      // 清除所有消息的编辑状态
+      messages.value.forEach(msg => {
+        msg.is_editing = false
+      })
+      
+      // 如果当前正在编辑的消息不存在了，退出编辑模式
+      if (isEditMode.value && editingMessage.value) {
+        const stillExists = messages.value.some(msg => msg.id === editingMessage.value!.id)
+        if (!stillExists) {
+          cancelEditing()
+        }
+      }
+      
       error.value = null
     } catch (err: unknown) {
       console.error('获取消息失败:', err)
@@ -279,6 +360,13 @@ export const useChatStore = defineStore('chat', () => {
       throw new Error('Token limit reached')
     }
     
+    // 如果是编辑模式，调用更新消息的方法
+    if (isEditMode.value && editingMessage.value) {
+      await updateUserMessageStream(editingMessage.value.id, content)
+      return
+    }
+    
+    // 以下是原有的发送新消息的逻辑
     // 在外部定义变量，以便catch块中可以访问
     let userMessage: Message | null = null
     let tempAiMessageId: number | null = null
@@ -488,6 +576,11 @@ export const useChatStore = defineStore('chat', () => {
     try {
       isLoading.value = true
       
+      // 退出编辑模式
+      if (isEditMode.value) {
+        cancelEditing()
+      }
+      
       // 流式重新生成
       const tempNewMessageId = Date.now()
       const oldMessage = messages.value.find(msg => msg.id === messageId)
@@ -658,6 +751,11 @@ export const useChatStore = defineStore('chat', () => {
           await fetchMessages()
         }
         
+        // 4. 如果删除的是正在编辑的消息，退出编辑模式
+        if (editingMessage.value && deletedIds.includes(editingMessage.value.id)) {
+          cancelEditing()
+        }
+        
         error.value = null
         return { success: true, data: response.data }
       } else {
@@ -676,6 +774,345 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
+  // ===== 新增：消息编辑相关方法 =====
+  /**
+   * 开始编辑消息
+   */
+  const startEditingMessage = async (message: Message): Promise<{
+    success: boolean;
+    error?: string;
+  }> => {
+    if (!message || message.role !== 'user') {
+      return { success: false, error: '只能编辑用户消息' }
+    }
+    
+    if (isStreaming.value) {
+      return { success: false, error: '请等待生成完成' }
+    }
+    
+    // 前端验证：检查是否是最新的用户消息
+    const latestUserMsg = latestUserMessage.value
+    if (!latestUserMsg || latestUserMsg.id !== message.id) {
+      return { success: false, error: '只能编辑最新的用户消息' }
+    }
+    
+    // 前端验证：检查消息是否被分支引用
+    if (isMessageBranchingPoint(message.id)) {
+      return { success: false, error: '此消息已被分支引用，无法编辑' }
+    }
+    
+    // 后端验证：检查消息是否可编辑
+    const checkResult = await checkMessageEditable(message.id)
+    if (!checkResult.is_editable) {
+      return { success: false, error: checkResult.reason || '消息不可编辑' }
+    }
+    
+    try {
+      // 设置编辑状态
+      editingMessage.value = { ...message }
+      isEditMode.value = true
+      inputPlaceholder.value = '正在编辑消息...'
+      
+      // 更新消息的编辑状态
+      const messageIndex = messages.value.findIndex(msg => msg.id === message.id)
+      if (messageIndex !== -1) {
+        const msg = messages.value[messageIndex]
+        if (msg) {
+          msg.is_editing = true
+          messages.value = [...messages.value] // 触发响应式更新
+        }
+      }
+      
+      return { success: true }
+    } catch (err: unknown) {
+      console.error('开始编辑消息失败:', err)
+      return { 
+        success: false, 
+        error: err instanceof Error ? err.message : '开始编辑消息失败' 
+      }
+    }
+  }
+
+  /**
+   * 检查消息是否可编辑
+   */
+  const checkMessageEditable = async (messageId: number): Promise<CheckMessageEditableResponse> => {
+    try {
+      const response = await chatApi.checkMessageEditable(messageId)
+      return response.data
+    } catch (err: unknown) {
+      console.error('检查消息可编辑性失败:', err)
+      return { 
+        is_editable: false, 
+        reason: err instanceof Error ? err.message : '检查消息可编辑性失败'
+      }
+    }
+  }
+
+  /**
+   * 更新用户消息（流式版本）
+   */
+  const updateUserMessageStream = async (messageId: number, newContent: string): Promise<void> => {
+    if (!currentConversation.value || !currentThread.value) {
+      console.error('没有活跃的对话或线程')
+      return
+    }
+    
+    if (!editingMessage.value) {
+      console.error('没有正在编辑的消息')
+      return
+    }
+    
+    if (editingMessage.value.id !== messageId) {
+      console.error('消息ID不匹配')
+      return
+    }
+    
+    // 检查是否达到Token上限
+    if (isTokenLimitReached.value) {
+      error.value = '当日API用量已达上限，请明日再试'
+      throw new Error('Token limit reached')
+    }
+    
+    // 在外部定义变量，以便catch块中可以访问
+    let tempNewAiMessageId: number | null = null
+    
+    try {
+      // 停止之前的流式请求
+      if (isStreaming.value && streamingController.value) {
+        streamingController.value.abort()
+      }
+      
+      // 创建新的AbortController
+      const controller = new AbortController()
+      streamingController.value = controller
+      isStreaming.value = true
+      streamingModel.value = currentModel.value
+      
+      // 立即更新本地用户消息内容，提供即时反馈
+      const messageIndex = messages.value.findIndex(msg => msg.id === messageId)
+      if (messageIndex !== -1) {
+        const msg = messages.value[messageIndex]
+        if (msg) {
+          msg.content = newContent
+          messages.value = [...messages.value] // 触发响应式更新
+        }
+      }
+      
+      // 找到用户消息对应的AI回复（如果有的话）
+      const userMessage = messages.value[messageIndex]
+      const aiMessageIndex = messageIndex + 1
+      let oldAiMessage: Message | null = null
+      
+      if (aiMessageIndex < messages.value.length && messages.value[aiMessageIndex]?.role === 'assistant') {
+        oldAiMessage = messages.value[aiMessageIndex]
+        
+        // 为新的AI消息创建占位符
+        tempNewAiMessageId = Date.now()
+        const newAiMessagePlaceholder: Message = {
+          id: tempNewAiMessageId,
+          thread_id: currentThread.value.id,
+          role: 'assistant',
+          content: '', // 初始为空
+          created_at: new Date().toISOString(),
+          parent_id: messageId,
+          model_used: currentModel.value
+        }
+        
+        // 移除旧的AI消息，添加新的AI消息占位符
+        messages.value.splice(aiMessageIndex, 1, newAiMessagePlaceholder)
+        messages.value = [...messages.value] // 触发响应式更新
+      } else {
+        // 如果没有现有的AI回复，创建新的占位符
+        tempNewAiMessageId = Date.now()
+        const newAiMessagePlaceholder: Message = {
+          id: tempNewAiMessageId,
+          thread_id: currentThread.value.id,
+          role: 'assistant',
+          content: '', // 初始为空
+          created_at: new Date().toISOString(),
+          parent_id: messageId,
+          model_used: currentModel.value
+        }
+        messages.value.push(newAiMessagePlaceholder)
+        messages.value = [...messages.value] // 触发响应式更新
+      }
+      
+      // 准备流式配置
+      const streamConfig: StreamRequestConfig = {
+        onMessage: (data: StreamResponseData) => {
+          if (data.error) {
+            // 处理错误
+            const errorMsg = data.content || '更新消息失败'
+            error.value = errorMsg
+            
+            // 更新消息内容
+            if (tempNewAiMessageId !== null) {
+              const msgIndex = messages.value.findIndex(msg => msg.id === tempNewAiMessageId)
+              if (msgIndex !== -1) {
+                const message = messages.value[msgIndex]
+                if (message) {
+                  message.content += errorMsg
+                  messages.value = [...messages.value]
+                }
+              }
+            }
+          } else if (data.done) {
+            // 流式完成
+            isStreaming.value = false
+            streamingController.value = null
+            
+            // 退出编辑模式
+            cancelEditing()
+            
+            // 处理消息ID更新
+            if (data.message_id && data.user_message_id) {
+              // 如果有消息ID，直接更新本地消息
+              setTimeout(() => {
+                // 更新用户消息ID（应该不变，但为了安全）
+                const userMsgIndex = messages.value.findIndex(msg => msg.id === messageId)
+                if (userMsgIndex !== -1 && messages.value[userMsgIndex]) {
+                  // 确保用户消息ID正确
+                  messages.value[userMsgIndex].id = data.user_message_id!
+                }
+                
+                // 更新AI消息ID
+                if (tempNewAiMessageId !== null) {
+                  const aiMsgIndex = messages.value.findIndex(msg => msg.id === tempNewAiMessageId)
+                  if (aiMsgIndex !== -1 && messages.value[aiMsgIndex]) {
+                    messages.value[aiMsgIndex].id = data.message_id!
+                    if (data.model_used) {
+                      messages.value[aiMsgIndex].model_used = data.model_used
+                    }
+                  }
+                }
+                
+                // 触发响应式更新
+                messages.value = [...messages.value]
+                console.log('已更新消息ID:', { 
+                  userMsgId: data.user_message_id, 
+                  aiMsgId: data.message_id 
+                })
+              }, 0)
+            } else {
+              // 如果没有消息ID，重新获取消息列表
+              setTimeout(async () => {
+                try {
+                  console.log('重新获取消息列表以获取真实ID...')
+                  await fetchMessages()
+                } catch (fetchError) {
+                  console.error('重新获取消息失败:', fetchError)
+                }
+              }, 300)
+            }
+            
+            // 更新线程的活跃状态
+            if (currentThread.value) {
+              currentThread.value.is_active = true
+              currentThread.value.updated_at = new Date().toISOString()
+            }
+            
+            // 刷新用量信息
+            fetchAIUsage()
+          } else {
+            // 正常内容
+            if (data.content && data.content.trim()) {
+              // 更新AI消息内容
+              if (tempNewAiMessageId !== null) {
+                const messageIndex = messages.value.findIndex(msg => msg.id === tempNewAiMessageId)
+                if (messageIndex !== -1) {
+                  const message = messages.value[messageIndex]
+                  if (message) {
+                    message.content += data.content
+                    messages.value = [...messages.value]
+                  }
+                }
+              }
+            }
+          }
+        },
+        onError: (err: Error) => {
+          console.error('更新消息流式请求错误:', err)
+          error.value = err.message
+          isStreaming.value = false
+          streamingController.value = null
+          
+          // 重新获取消息以恢复状态
+          setTimeout(async () => {
+            try {
+              await fetchMessages()
+            } catch (fetchError) {
+              console.error('重新获取消息失败:', fetchError)
+            }
+          }, 300)
+        },
+        onComplete: () => {
+          console.log('更新消息流式请求完成')
+        },
+        signal: controller.signal
+      }
+      
+      // 调用API更新用户消息
+      await chatApi.updateUserMessageStream(
+        messageId,
+        {
+          content: newContent,
+          model: currentModel.value
+        },
+        streamConfig
+      )
+      
+      error.value = null
+      
+    } catch (err: unknown) {
+      console.error('更新用户消息失败:', err)
+      error.value = err instanceof Error ? err.message : '更新用户消息失败'
+      isStreaming.value = false
+      streamingController.value = null
+      
+      // 重新获取消息以恢复状态
+      setTimeout(async () => {
+        try {
+          await fetchMessages()
+        } catch (fetchError) {
+          console.error('重新获取消息失败:', fetchError)
+        }
+      }, 300)
+      
+      throw err
+    }
+  }
+
+  /**
+   * 取消编辑
+   */
+  const cancelEditing = (): void => {
+    // 清除消息的编辑状态
+    if (editingMessage.value) {
+      const messageIndex = messages.value.findIndex(msg => msg.id === editingMessage.value!.id)
+      if (messageIndex !== -1) {
+        const msg = messages.value[messageIndex]
+        if (msg) {
+          msg.is_editing = false
+          messages.value = [...messages.value] // 触发响应式更新
+        }
+     }
+}
+    
+    // 重置编辑状态
+    editingMessage.value = null
+    isEditMode.value = false
+    inputPlaceholder.value = '发送消息给AI... (Shift+Enter换行，Enter发送)'
+  }
+
+  /**
+   * 获取编辑的消息内容
+   */
+  const getEditingMessageContent = (): string => {
+    return editingMessage.value?.content || ''
+  }
+  // ================================
+
   // ========== 分支相关 ==========
   /**
    * 创建分支
@@ -686,6 +1123,11 @@ export const useChatStore = defineStore('chat', () => {
       console.error(errorMsg)
       error.value = errorMsg
       throw new Error(errorMsg)
+    }
+    
+    // 退出编辑模式
+    if (isEditMode.value) {
+      cancelEditing()
     }
     
     try {
@@ -751,6 +1193,9 @@ export const useChatStore = defineStore('chat', () => {
       
       // 停止当前流式生成
       await stopStreaming()
+      
+      // 退出编辑模式
+      cancelEditing()
       
       // 获取线程详情
       const threadResponse = await chatApi.getThread(threadId)
@@ -1054,6 +1499,9 @@ export const useChatStore = defineStore('chat', () => {
     if (isStreaming.value) {
       return 'AI正在生成，请稍后...'
     }
+    if (isEditMode.value) {
+      return '正在编辑消息...'
+    }
     return '发送消息给AI... (Shift+Enter换行，Enter发送)'
   }
 
@@ -1068,9 +1516,9 @@ export const useChatStore = defineStore('chat', () => {
       return '停止生成'
     }
     if (!userInput.trim()) {
-      return '请输入消息'
+      return isEditMode.value ? '请输入消息' : '请输入消息'
     }
-    return '发送消息'
+    return isEditMode.value ? '更新' : '发送消息'
   }
 
   /**
@@ -1163,7 +1611,9 @@ export const useChatStore = defineStore('chat', () => {
     const titles = {
       regenerate: '',
       branch: '',
-      delete: ''
+      delete: '',
+      edit: '',
+      copy: ''
     }
     
     // 重新生成按钮标题
@@ -1205,13 +1655,25 @@ export const useChatStore = defineStore('chat', () => {
       titles.delete = '删除此AI回复及其对应的用户提问'
     }
     
+    // 编辑按钮标题
+    if (isStreaming.value) {
+      titles.edit = '请等待生成完成'
+    } else if (message.role !== 'user') {
+      titles.edit = '只能编辑用户消息'
+    } else {
+      titles.edit = '编辑此消息'
+    }
+    
+    // 复制按钮标题
+    titles.copy = '复制内容'
+    
     return titles
   }
 
   /**
    * 验证消息是否可以操作
    */
-  const validateMessageOperation = (messageId: number, operation: 'regenerate' | 'branch' | 'delete'): {
+  const validateMessageOperation = (messageId: number, operation: 'regenerate' | 'branch' | 'delete' | 'edit' | 'copy'): {
     can: boolean
     reason?: string
   } => {
@@ -1263,6 +1725,27 @@ export const useChatStore = defineStore('chat', () => {
         }
         return { can: true }
         
+      case 'edit':
+        if (isStreaming.value) {
+          return { can: false, reason: '请等待生成完成' }
+        }
+        if (message.role !== 'user') {
+          return { can: false, reason: '只能编辑用户消息' }
+        }
+        // 检查是否是最新的用户消息
+        const latestUserMsg = latestUserMessage.value
+        if (!latestUserMsg || latestUserMsg.id !== message.id) {
+          return { can: false, reason: '只能编辑最新的用户消息' }
+        }
+        // 检查是否被分支引用
+        if (isMessageBranchingPoint(message.id)) {
+          return { can: false, reason: '此消息已被分支引用，无法编辑' }
+        }
+        return { can: true }
+        
+      case 'copy':
+        return { can: true }
+        
       default:
         return { can: false, reason: '未知操作' }
     }
@@ -1301,10 +1784,23 @@ export const useChatStore = defineStore('chat', () => {
     availableModels,
     currentModel,
     
+    // ===== 新增：消息编辑相关状态 =====
+    editingMessage,
+    isEditMode,
+    cancelEditMode,
+    inputPlaceholder,
+    // ================================
+    
     // 计算属性
     threadPath,
     isTokenLimitReached,
     latestMessage,
+    // ===== 新增：消息编辑相关计算属性 =====
+    latestUserMessage,
+    isEditing,
+    editableMessage,
+    canEditMessage,
+    // ================================
 
     // 基础动作
     fetchConversations,
@@ -1320,6 +1816,14 @@ export const useChatStore = defineStore('chat', () => {
     regenerateMessage,
     deleteMessage,
     stopStreaming,
+    
+    // ===== 新增：消息编辑相关动作 =====
+    startEditingMessage,
+    checkMessageEditable,
+    updateUserMessageStream,
+    cancelEditing,
+    getEditingMessageContent,
+    // ================================
     
     // 分支相关动作
     createBranch,

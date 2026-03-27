@@ -18,7 +18,6 @@ export interface Thread {
   depth: number
   // ===== 新增字段 =====
   parent_thread_id?: number | null
-  // ====================
 }
 
 // 在现有的类型定义中添加
@@ -43,6 +42,8 @@ export interface Message {
   model_used?: string
   tokens?: number
   created_at: string
+  // ===== 新增字段 =====
+  is_editing?: boolean  // 前端专用：标记消息是否正在被编辑
 }
 
 // API请求/响应类型
@@ -153,7 +154,7 @@ export interface RegenerateMessageResponse {
   }
 }
 
-// ===== 新增：删除线程相关的类型 =====
+// ===== 删除线程相关的类型 =====
 export type DeleteThreadRequest = Record<string, never>  // 表示空对象，而不是空接口
 
 export interface ThreadDeleteInfo {
@@ -166,5 +167,32 @@ export interface DeleteThreadResponse {
   code: number
   message: string
   data?: ThreadDeleteInfo
+}
+// ===================================
+
+// ===== 新增：消息编辑相关类型 =====
+export interface CheckMessageEditableRequest {
+  message_id: number
+}
+
+export interface CheckMessageEditableResponse {
+  is_editable: boolean
+  reason?: string
+}
+
+export interface UpdateUserMessageRequest {
+  content: string
+  model?: string
+}
+
+export interface UpdateUserMessageResponse {
+  code: number
+  message: string
+  data?: {
+    updated_user_message: Message
+    new_ai_message: Message
+    conversation_id: number
+    thread_id: number
+  }
 }
 // ===================================

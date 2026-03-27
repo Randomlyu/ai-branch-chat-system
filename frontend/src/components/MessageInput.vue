@@ -28,18 +28,29 @@
           @input="autoResizeTextarea"
         ></textarea>
         <div class="send-controls">
+          <!-- 编辑模式下的取消按钮 -->
+          <button
+            v-if="isEditMode"
+            class="btn-cancel"
+            @click="handleCancelEdit"
+            :disabled="isLoading || isStreaming"
+            title="取消编辑"
+          >
+            <span class="icon cancel-icon">✕</span>
+          </button>
           <button
             class="btn-send"
             @click="handleButtonClick"
             :disabled="!isButtonEnabled"
             :class="{ 
-            disabled: !isButtonEnabled,
-            streaming: isStreaming
+              disabled: !isButtonEnabled,
+              streaming: isStreaming
             }"
             :title="sendButtonTitle"
           >
-          <span v-if="isStreaming" class="icon stop-icon" title="停止生成">⏹️</span>
-          <span v-else class="icon send-icon">⬆</span>
+            <span v-if="isStreaming" class="icon stop-icon" title="停止生成">⏹️</span>
+            <span v-else-if="isEditMode" class="icon update-icon">✓</span>
+            <span v-else class="icon send-icon">⬆</span>
           </button>
         </div>
       </div>
@@ -54,6 +65,7 @@
         <span class="hint">线程ID: {{ threadId || '--' }}</span>
         <span v-if="isTokenLimitReached" class="hint warning">用量已达上限</span>
         <span v-else-if="remainingTokens" class="hint">剩余: {{ remainingTokens }} tokens</span>
+        <span v-if="isEditMode" class="hint editing">正在编辑消息</span>
       </div>
     </div>
   </div>
@@ -98,6 +110,9 @@ const props = defineProps<{
   sendButtonTitle: string
   formattedModelName: string
   remainingTokens: string
+  // ===== 新增：编辑模式相关 =====
+  isEditMode: boolean
+  // ============================
 }>()
 
 // 定义事件
@@ -105,6 +120,9 @@ const emit = defineEmits<{
   'update:userInput': [value: string]
   send: []
   stop: []
+  // ===== 新增：取消编辑事件 =====
+  cancelEdit: []
+  // ============================
 }>()
 
 // 本地数据 - 使用计算属性来同步props和emit
@@ -171,6 +189,15 @@ const autoResizeTextarea = () => {
     textarea.style.height = `${textarea.scrollHeight}px`
   }
 }
+
+// ===== 新增：取消编辑 =====
+/**
+ * 处理取消编辑
+ */
+const handleCancelEdit = () => {
+  emit('cancelEdit')
+}
+// ========================
 
 // 暴露方法供父组件调用
 defineExpose({
@@ -280,6 +307,37 @@ watch(() => props.isStreaming, (newVal) => {
   margin-bottom: 8px;
 }
 
+/* 取消按钮 */
+.btn-cancel {
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+  background: #6b7280;
+  color: white;
+  border: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background 0.2s, transform 0.1s;
+  flex-shrink: 0;
+  font-size: 18px;
+}
+
+.btn-cancel:hover:not(:disabled) {
+  background: #4b5563;
+  transform: translateY(-1px);
+}
+
+.btn-cancel:active:not(:disabled) {
+  transform: scale(0.95);
+}
+
+.btn-cancel:disabled {
+  background: #ccc;
+  cursor: not-allowed;
+}
+
 /* 发送按钮 */
 .btn-send {
   width: 44px;
@@ -319,6 +377,15 @@ watch(() => props.isStreaming, (newVal) => {
   background: #b91c1c;
 }
 
+/* 编辑模式下的发送按钮样式 */
+.btn-send:not(.streaming) {
+  background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+}
+
+.btn-send:not(.streaming):hover:not(.disabled) {
+  background: linear-gradient(135deg, #d97706 0%, #b45309 100%);
+}
+
 /* 输入页脚 */
 .input-footer {
   display: flex;
@@ -354,6 +421,15 @@ watch(() => props.isStreaming, (newVal) => {
 .hint.warning {
   color: #dc2626;
   font-weight: 500;
+}
+
+.hint.editing {
+  color: #f59e0b;
+  font-weight: 500;
+  background: rgba(245, 158, 11, 0.1);
+  padding: 2px 8px;
+  border-radius: 4px;
+  border: 1px solid rgba(245, 158, 11, 0.2);
 }
 
 /* Token限制警告 */
@@ -407,6 +483,16 @@ watch(() => props.isStreaming, (newVal) => {
 
 .send-icon {
   font-size: 20px;
+  font-weight: bold;
+}
+
+.update-icon {
+  font-size: 20px;
+  font-weight: bold;
+}
+
+.cancel-icon {
+  font-size: 18px;
   font-weight: bold;
 }
 

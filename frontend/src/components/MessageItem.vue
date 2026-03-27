@@ -1,5 +1,11 @@
 <template>
-  <div class="message-wrapper" :class="msg.role">
+  <div 
+    class="message-wrapper" 
+    :class="[
+      msg.role, 
+      { 'is-editing': msg.is_editing }
+    ]"
+  >
     <div class="message-avatar">
       {{ msg.role === 'user' ? '👤' : '🤖' }}
     </div>
@@ -19,7 +25,7 @@
         <div class="generating-text">{{ formattedModelName || 'AI' }}正在生成...</div>
       </div>
       
-      <!-- 消息操作按钮 -->
+      <!-- AI消息操作按钮 -->
       <div class="message-actions" v-if="msg.role === 'assistant'">
         <!-- 复制按钮 -->
         <button 
@@ -68,6 +74,32 @@
           </svg>
         </button>
       </div>
+      
+      <!-- 用户消息操作按钮 -->
+      <div class="message-actions" v-else>
+        <!-- 复制按钮 -->
+        <button 
+          class="btn-action copy-btn"
+          @click="$emit('copy', msg.content)"
+          title="复制消息"
+        >
+          <svg class="action-icon" viewBox="0 0 24 24" width="16" height="16">
+            <path fill="currentColor" d="M19,21H8V7H19M19,5H8A2,2 0 0,0 6,7V21A2,2 0 0,0 8,23H19A2,2 0 0,0 21,21V7A2,2 0 0,0 19,5M16,1H4A2,2 0 0,0 2,3V17H4V3H16V1Z"/>
+          </svg>
+        </button>
+        
+        <!-- 编辑按钮 -->
+        <button 
+          class="btn-action edit-btn"
+          @click="$emit('edit', msg.id)"
+          :disabled="!canEdit"
+          :title="editTitle"
+        >
+          <svg class="action-icon" viewBox="0 0 24 24" width="16" height="16">
+            <path fill="currentColor" d="M20.71,7.04C21.1,6.65 21.1,6 20.71,5.63L18.37,3.29C18,2.9 17.35,2.9 16.96,3.29L15.12,5.12L18.87,8.87M3,17.25V21H6.75L17.81,9.93L14.06,6.18L3,17.25Z"/>
+          </svg>
+        </button>
+      </div>
     </div>
   </div>
 </template>
@@ -87,10 +119,12 @@ interface MessageItemProps {
   canRegenerate: boolean
   canCreateBranch: boolean
   isBranchingPoint: boolean
+  canEdit: boolean
   // 按钮标题相关
   regenerateTitle: string
   branchTitle: string
   deleteTitle: string
+  editTitle: string
   // 格式化后的内容
   formattedTime: string
   formattedContent: string
@@ -108,6 +142,7 @@ defineEmits<{
   regenerate: [messageId: number]
   branch: [messageId: number]
   delete: [messageId: number]
+  edit: [messageId: number]
 }>()
 
 // 计算属性：是否显示生成指示器
@@ -129,6 +164,25 @@ const isGenerating = computed(() => {
   width: 100%;
   margin: 0 auto;
   transition: all 0.3s ease;
+  position: relative;
+}
+
+/* 编辑状态的高亮样式 */
+.message-wrapper.is-edting {
+  padding: 8px;
+  background: linear-gradient(135deg, rgba(59, 130, 246, 0.1) 0%, rgba(59, 130, 246, 0.05) 100%);
+  border-radius: 12px;
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.3);
+  animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.3);
+  }
+  50% {
+    box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.5);
+  }
 }
 
 .message-wrapper.user {
@@ -288,9 +342,7 @@ const isGenerating = computed(() => {
   transform: translateY(0);
 }
 
-.user .message-actions {
-  display: none;
-}
+/* 之前是 .user .message-actions { display: none; } 现在移除了这个规则 */
 
 /* 消息操作按钮通用样式 */
 .btn-action {
@@ -429,6 +481,25 @@ const isGenerating = computed(() => {
   color: #ef4444;
   background: linear-gradient(135deg, rgba(239, 68, 68, 0.1) 0%, rgba(239, 68, 68, 0.05) 100%);
   border-color: rgba(239, 68, 68, 0.3);
+}
+
+/* 编辑按钮样式 */
+.edit-btn {
+  color: #f59e0b;
+  border-color: rgba(245, 158, 11, 0.3);
+  background: linear-gradient(135deg, rgba(245, 158, 11, 0.1) 0%, rgba(245, 158, 11, 0.05) 100%);
+}
+
+.edit-btn:hover {
+  color: white;
+  background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+  border-color: #f59e0b;
+}
+
+.edit-btn:disabled:hover {
+  color: #f59e0b;
+  background: linear-gradient(135deg, rgba(245, 158, 11, 0.1) 0%, rgba(245, 158, 11, 0.05) 100%);
+  border-color: rgba(245, 158, 11, 0.3);
 }
 
 /* 按钮工具提示 */
