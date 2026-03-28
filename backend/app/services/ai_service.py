@@ -5,10 +5,11 @@ import json
 import threading
 import re
 from typing import Dict, Any, Optional, List, AsyncGenerator
-from datetime import datetime, date
+from datetime import datetime, date, timedelta, timezone
 from pathlib import Path
 from openai import AsyncOpenAI
 from dotenv import load_dotenv
+import pytz
 
 # 加载环境变量
 load_dotenv()
@@ -23,6 +24,7 @@ class TokenUsageTracker:
         self.data_file = Path(data_file)
         self._lock = threading.Lock()
         self._usage_data: Optional[Dict] = None
+        self._beijing_tz = pytz.timezone('Asia/Shanghai')  # 北京时区
         
         # 初始化数据文件
         self._init_data_file()
@@ -31,10 +33,14 @@ class TokenUsageTracker:
         """初始化数据文件"""
         with self._lock:
             if not self.data_file.exists():
+                # 获取北京时间当前日期
+                beijing_now = datetime.now(self._beijing_tz)
+                beijing_date = beijing_now.date()
+                
                 initial_data = {
-                    "current_date": date.today().isoformat(),
+                    "current_date": beijing_date.isoformat(),
                     "total_tokens": 0,
-                    "last_reset": date.today().isoformat()
+                    "last_reset": beijing_date.isoformat()
                 }
                 self._write_data(initial_data)
                 logger.info(f"已创建用量数据文件: {self.data_file}")
@@ -46,10 +52,13 @@ class TokenUsageTracker:
                 return json.load(f)
         except (json.JSONDecodeError, FileNotFoundError) as e:
             logger.warning(f"读取用量数据失败，重置数据: {e}")
+            # 获取北京时间当前日期
+            beijing_now = datetime.now(self._beijing_tz)
+            beijing_date = beijing_now.date()
             return {
-                "current_date": date.today().isoformat(),
+                "current_date": beijing_date.isoformat(),
                 "total_tokens": 0,
-                "last_reset": date.today().isoformat()
+                "last_reset": beijing_date.isoformat()
             }
     
     def _write_data(self, data: Dict):
@@ -61,16 +70,23 @@ class TokenUsageTracker:
             logger.error(f"写入用量数据失败: {e}")
     
     def _check_and_reset_if_needed(self, data: Dict) -> Dict:
-        """检查并重置过期数据"""
-        today = date.today()
-        last_reset = datetime.strptime(data["last_reset"], "%Y-%m-%d").date()
+        """检查并重置过期数据（基于北京时间）"""
+        # 获取当前北京时间
+        beijing_now = datetime.now(self._beijing_tz)
+        beijing_today = beijing_now.date()
         
-        # 如果日期变化，重置用量
-        if last_reset < today:
-            data["current_date"] = today.isoformat()
-            data["total_tokens"] = 0
-            data["last_reset"] = today.isoformat()
-            logger.info(f"Token用量已重置，新日期: {today}")
+        # 从数据中读取上次重置日期
+        last_reset_str = data.get("last_reset")
+        if last_reset_str:
+            # 解析日期字符串
+            last_reset_date = datetime.strptime(last_reset_str, "%Y-%m-%d").date()
+            
+            # 如果日期变化（基于北京时间），重置用量
+            if last_reset_date < beijing_today:
+                data["current_date"] = beijing_today.isoformat()
+                data["total_tokens"] = 0
+                data["last_reset"] = beijing_today.isoformat()
+                logger.info(f"Token用量已重置，新日期: {beijing_today}")
         
         return data
     
@@ -106,16 +122,25 @@ class TokenUsageTracker:
             return data["total_tokens"]
     
     def get_current_usage(self) -> Dict:
-        """获取当前用量信息"""
+        """获取当前用量信息（包含重置时间）"""
         with self._lock:
             data = self._read_data()
             data = self._check_and_reset_if_needed(data)
             
+            # 计算下次重置时间（北京时间次日0点）
+            beijing_now = datetime.now(self._beijing_tz)
+            beijing_today = beijing_now.date()
+            beijing_tomorrow = beijing_today + timedelta(days=1)
+            next_reset_time = self._beijing_tz.localize(
+                datetime.combine(beijing_tomorrow, datetime.min.time())
+            )
+            
             return {
-                "current_date": data["current_date"],
+                "current_date": data.get("current_date"),
                 "total_tokens": data.get("total_tokens", 0),
-                "max_daily_tokens": int(os.getenv("MAX_DAILY_TOKENS", 1000000)),
-                "remaining_tokens": max(0, int(os.getenv("MAX_DAILY_TOKENS", 1000000)) - data.get("total_tokens", 0))
+                "last_reset": data.get("last_reset"),
+                "next_reset": next_reset_time.isoformat(),  # 返回ISO格式的时间
+                "next_reset_timestamp": int(next_reset_time.timestamp() * 1000)  # 前端可用的时间戳
             }
 
 
@@ -514,12 +539,25 @@ class AIService:
     
     def get_usage_info(self) -> Dict[str, Any]:
         """获取用量信息"""
+        # 获取token跟踪器的使用情况
         usage = token_tracker.get_current_usage()
+    
+        # 从环境变量获取最大每日token数
+        max_daily_tokens = int(os.getenv("MAX_DAILY_TOKENS", 1000000))
+    
+        # 计算剩余token数
+        total_tokens = usage.get("total_tokens", 0)
+        remaining_tokens = max(0, max_daily_tokens - total_tokens)
+    
+        # 确保返回所有前端需要的字段
         usage.update({
-            "available_models": self.get_available_models(),
-            "default_model": self.get_default_model(),
-            "streaming_enabled": True  # 现在始终为True
+          "max_daily_tokens": max_daily_tokens,
+          "remaining_tokens": remaining_tokens,
+          "available_models": self.get_available_models(),
+          "default_model": self.get_default_model(),
+          "streaming_enabled": True  # 现在始终为True
         })
+    
         return usage
     
     def stop_user_request(self, user_id: str):

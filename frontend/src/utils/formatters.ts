@@ -1,12 +1,132 @@
 /**
  * 时间格式化工具函数
- * @param timestamp 时间戳或日期对象
+ * @param timestamp 时间字符串或日期对象
  * @returns 格式化的时间字符串 (HH:MM)
  */
 export const formatTime = (timestamp: string | Date | undefined): string => {
   if (!timestamp) return '--'
-  const date = new Date(timestamp)
-  return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  
+  try {
+    // 创建Date对象
+    const date = timestamp instanceof Date ? timestamp : new Date(timestamp)
+    
+    // 检查是否为无效日期
+    if (isNaN(date.getTime())) {
+      return '--'
+    }
+    
+    // 将UTC时间转换为北京时间（UTC+8）
+    const beijingTime = new Date(date.getTime() + 8 * 60 * 60 * 1000)
+    
+    // 格式化为 HH:MM
+    return beijingTime.toISOString().substr(11, 5)
+  } catch (error) {
+    console.error('时间格式化错误:', error, timestamp)
+    return '--'
+  }
+}
+
+/**
+ * 格式化完整日期时间
+ * @param timestamp 时间字符串或日期对象
+ * @returns 格式化的日期时间字符串 (YYYY-MM-DD HH:MM:SS)
+ */
+export const formatDateTime = (timestamp: string | Date | undefined): string => {
+  if (!timestamp) return '--'
+  
+  try {
+    const date = timestamp instanceof Date ? timestamp : new Date(timestamp)
+    
+    if (isNaN(date.getTime())) {
+      return '--'
+    }
+    
+    // 转换为北京时间
+    const beijingTime = new Date(date.getTime() + 8 * 60 * 60 * 1000)
+    
+    // 格式化为 YYYY-MM-DD HH:MM:SS
+    const year = beijingTime.getUTCFullYear()
+    const month = String(beijingTime.getUTCMonth() + 1).padStart(2, '0')
+    const day = String(beijingTime.getUTCDate()).padStart(2, '0')
+    const hours = String(beijingTime.getUTCHours()).padStart(2, '0')
+    const minutes = String(beijingTime.getUTCMinutes()).padStart(2, '0')
+    const seconds = String(beijingTime.getUTCSeconds()).padStart(2, '0')
+    
+    return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`
+  } catch (error) {
+    console.error('日期时间格式化错误:', error, timestamp)
+    return '--'
+  }
+}
+
+/**
+ * 格式化相对时间（例如：刚刚、5分钟前、今天 HH:MM、昨天 HH:MM、MM-DD HH:MM）
+ * @param timestamp 时间字符串或日期对象
+ * @returns 相对时间字符串
+ */
+export const formatRelativeTime = (timestamp: string | Date | undefined): string => {
+  if (!timestamp) return '--'
+  
+  try {
+    const date = timestamp instanceof Date ? timestamp : new Date(timestamp)
+    
+    if (isNaN(date.getTime())) {
+      return '--'
+    }
+    
+    // 转换为北京时间
+    const now = new Date()
+    const beijingNow = new Date(now.getTime() + 8 * 60 * 60 * 1000)
+    const beijingTime = new Date(date.getTime() + 8 * 60 * 60 * 1000)
+    
+    const diffMs = beijingNow.getTime() - beijingTime.getTime()
+    const diffMins = Math.floor(diffMs / (1000 * 60))
+    const diffHours = Math.floor(diffMs / (1000 * 60 * 60))
+    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24))
+    
+    // 今天
+    if (beijingTime.getUTCDate() === beijingNow.getUTCDate() && 
+        beijingTime.getUTCMonth() === beijingNow.getUTCMonth() && 
+        beijingTime.getUTCFullYear() === beijingNow.getUTCFullYear()) {
+      if (diffMins < 1) {
+        return '刚刚'
+      } else if (diffMins < 60) {
+        return `${diffMins}分钟前`
+      } else {
+        return `${diffHours}小时前`
+      }
+    }
+    
+    // 昨天
+    const yesterday = new Date(beijingNow)
+    yesterday.setUTCDate(beijingNow.getUTCDate() - 1)
+    
+    if (beijingTime.getUTCDate() === yesterday.getUTCDate() && 
+        beijingTime.getUTCMonth() === yesterday.getUTCMonth() && 
+        beijingTime.getUTCFullYear() === yesterday.getUTCFullYear()) {
+      const hours = String(beijingTime.getUTCHours()).padStart(2, '0')
+      const minutes = String(beijingTime.getUTCMinutes()).padStart(2, '0')
+      return `昨天 ${hours}:${minutes}`
+    }
+    
+    // 更早的时间
+    const month = String(beijingTime.getUTCMonth() + 1).padStart(2, '0')
+    const day = String(beijingTime.getUTCDate()).padStart(2, '0')
+    const hours = String(beijingTime.getUTCHours()).padStart(2, '0')
+    const minutes = String(beijingTime.getUTCMinutes()).padStart(2, '0')
+    
+    // 如果是今年
+    if (beijingTime.getUTCFullYear() === beijingNow.getUTCFullYear()) {
+      return `${month}-${day} ${hours}:${minutes}`
+    }
+    
+    // 其他年份
+    const year = beijingTime.getUTCFullYear()
+    return `${year}-${month}-${day} ${hours}:${minutes}`
+  } catch (error) {
+    console.error('相对时间格式化错误:', error, timestamp)
+    return '--'
+  }
 }
 
 /**

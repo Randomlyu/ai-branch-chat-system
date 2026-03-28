@@ -87,7 +87,9 @@
           {{ Math.round((aiUsage.total_tokens / aiUsage.max_daily_tokens) * 100) }}%
         </span>
       </div>
-      <div class="usage-date">重置时间: {{ aiUsage.current_date }}</div>
+      <div class="usage-date" v-if="nextResetTime">下次重置: {{ formatResetTime(nextResetTime) }}</div>
+      <div class="usage-date" v-else-if="aiUsage.current_date">重置日期: {{ formatDate(aiUsage.current_date) }}</div>
+      <div class="usage-date" v-else>重置时间: 未知</div>
     </div>
     
     <div class="sidebar-footer">
@@ -101,12 +103,11 @@
 </template>
 
 <script setup lang="ts">
-import { ref, nextTick } from 'vue'
+import { ref, nextTick, computed } from 'vue'
 import { formatTime, formatNumber } from '@/utils/formatters'
 import type { Conversation } from '@/types/chat'
 
 // 定义Props
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
 const props = defineProps<{
   conversations: Conversation[]
   currentConversation: Conversation | null
@@ -115,6 +116,8 @@ const props = defineProps<{
     total_tokens: number
     max_daily_tokens: number
     remaining_tokens: number
+    next_reset?: string
+    next_reset_timestamp?: number
   } | null
   isCollapsed: boolean
   isStreaming: boolean
@@ -134,6 +137,39 @@ const emit = defineEmits<{
 const editingConversationId = ref<number | null>(null)
 const editingTitle = ref('')
 const titleInput = ref<HTMLInputElement>()
+
+// 计算下次重置时间（兼容旧版API）
+const nextResetTime = computed(() => {
+  if (!props.aiUsage) return null
+  
+  // 如果有后端返回的next_reset，直接使用
+  if (props.aiUsage.next_reset) {
+    return props.aiUsage.next_reset
+  }
+  
+  // 如果有timestamp，转换为ISO字符串
+  if (props.aiUsage.next_reset_timestamp) {
+    return new Date(props.aiUsage.next_reset_timestamp).toISOString()
+  }
+  
+  // 如果没有next_reset信息，根据current_date计算
+  if (props.aiUsage.current_date) {
+    try {
+      const today = new Date(props.aiUsage.current_date)
+      // 计算明天0点（北京时间）
+      const tomorrow = new Date(today)
+      tomorrow.setDate(today.getDate() + 1)
+      tomorrow.setHours(0, 0, 0, 0)
+      
+      // 转换为ISO字符串
+      return tomorrow.toISOString()
+    } catch (e) {
+      console.error('计算重置时间失败:', e)
+    }
+  }
+  
+  return null
+})
 
 // 方法
 const handleCreateConversation = () => {
@@ -161,6 +197,77 @@ const handleSaveTitle = (conversationId: number) => {
 const cancelEditTitle = () => {
   editingConversationId.value = null
   editingTitle.value = ''
+}
+
+// 新增格式化函数
+const formatResetTime = (timestamp: string | undefined | null): string => {
+  if (!timestamp) return '未知'
+  
+  try {
+    const resetTime = new Date(timestamp)
+    
+    // 检查是否为无效日期
+    if (isNaN(resetTime.getTime())) {
+      return '未知'
+    }
+    
+    // 转换为北京时间（如果后端返回的是UTC）
+    const beijingTime = new Date(resetTime.getTime() + 8 * 60 * 60 * 1000)
+    
+    const now = new Date()
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+    const tomorrow = new Date(today.getTime() + 24 * 60 * 60 * 1000)
+    
+    const resetDate = new Date(
+      beijingTime.getUTCFullYear(),
+      beijingTime.getUTCMonth(),
+      beijingTime.getUTCDate()
+    )
+    
+    // 判断是否是今天重置
+    if (resetDate.getTime() === today.getTime()) {
+      const hours = String(beijingTime.getUTCHours()).padStart(2, '0')
+      const minutes = String(beijingTime.getUTCMinutes()).padStart(2, '0')
+      return `今天 ${hours}:${minutes}`
+    }
+    // 判断是否是明天重置
+    else if (resetDate.getTime() === tomorrow.getTime()) {
+      const hours = String(beijingTime.getUTCHours()).padStart(2, '0')
+      const minutes = String(beijingTime.getUTCMinutes()).padStart(2, '0')
+      return `明天 ${hours}:${minutes}`
+    }
+    // 其他时间
+    else {
+      const month = String(beijingTime.getUTCMonth() + 1).padStart(2, '0')
+      const day = String(beijingTime.getUTCDate()).padStart(2, '0')
+      const hours = String(beijingTime.getUTCHours()).padStart(2, '0')
+      const minutes = String(beijingTime.getUTCMinutes()).padStart(2, '0')
+      return `${month}月${day}日 ${hours}:${minutes}`
+    }
+  } catch (error) {
+    console.error('重置时间格式化错误:', error, timestamp)
+    return '未知'
+  }
+}
+
+// 简单日期格式化
+const formatDate = (dateStr: string | undefined): string => {
+  if (!dateStr) return '未知'
+  
+  try {
+    const date = new Date(dateStr)
+    if (isNaN(date.getTime())) {
+      return dateStr
+    }
+    
+    const year = date.getFullYear()
+    const month = String(date.getMonth() + 1).padStart(2, '0')
+    const day = String(date.getDate()).padStart(2, '0')
+    
+    return `${year}-${month}-${day}`
+  } catch {
+    return dateStr
+  }
 }
 
 // 暴露方法供父组件调用

@@ -123,6 +123,8 @@ export interface AIUsageInfo {
   available_models: string[]
   default_model: string
   streaming_enabled: boolean
+  next_reset?: string
+  next_reset_timestamp?: number
 }
 
 // 模型列表响应

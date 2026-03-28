@@ -1,6 +1,30 @@
-from typing import Optional, List, Dict, Any
-from pydantic import BaseModel, ConfigDict, Field
-from datetime import datetime
+from typing import Optional, List, Dict, Any, Union
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+from datetime import datetime, timezone, timedelta
+import pytz
+
+# 北京时区
+BEIJING_TZ = pytz.timezone('Asia/Shanghai')
+
+def to_beijing_time(dt: Union[datetime, str, None]) -> Optional[datetime]:
+    """将时间转换为北京时间"""
+    if dt is None:
+        return None
+    
+    if isinstance(dt, str):
+        dt = datetime.fromisoformat(dt.replace('Z', '+00:00'))
+    
+    # 如果datetime是naive（没有时区信息），假定为UTC
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    
+    # 转换为北京时间
+    return dt.astimezone(BEIJING_TZ)
+
+def format_datetime_for_display(dt: datetime) -> str:
+    """格式化时间为字符串，用于前端显示"""
+    beijing_dt = to_beijing_time(dt)
+    return beijing_dt.isoformat()
 
 class ThreadUpdate(BaseModel):
     title: str
@@ -22,7 +46,11 @@ class MessageCreate(MessageBase):
 class Message(MessageBase):
     id: int
     created_at: datetime
-    
+    @field_validator('created_at')
+    @classmethod
+    def convert_to_beijing_time(cls, v: datetime) -> str:
+        """将created_at字段转换为北京时间字符串"""
+        return format_datetime_for_display(v)
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -52,7 +80,11 @@ class Thread(ThreadBase):
     
     # 可选的子线程列表（用于API响应，便于前端构建树）
     child_threads: Optional[List["Thread"]] = None
-    
+    @field_validator('created_at', 'updated_at')
+    @classmethod
+    def convert_to_beijing_time(cls, v: datetime) -> str:
+        """将时间字段转换为北京时间字符串"""
+        return format_datetime_for_display(v)
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -73,7 +105,11 @@ class Conversation(ConversationBase):
     user_id: Optional[int] = None
     created_at: datetime
     updated_at: datetime
-    
+    @field_validator('created_at', 'updated_at')
+    @classmethod
+    def convert_to_beijing_time(cls, v: datetime) -> str:
+        """将时间字段转换为北京时间字符串"""
+        return format_datetime_for_display(v)
     model_config = ConfigDict(from_attributes=True)
 
 

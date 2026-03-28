@@ -11,6 +11,7 @@ import type {
   RegenerateMessageRequest,
   ThreadDeleteInfo,
   CreateBranchRequest,
+  AIUsageInfo,
   // ===== 新增导入 =====
   CheckMessageEditableRequest,
   CheckMessageEditableResponse,
@@ -355,7 +356,7 @@ export const stopGeneration = async (): Promise<ApiResponse<void>> => {
 /**
  * 获取AI用量信息
  */
-export const getAIUsage = async (): Promise<ApiResponse<unknown>> => {
+export const getAIUsage = async (): Promise<ApiResponse<AIUsageInfo>> => {
   return apiClient.get('/chat/usage/')
 }
 
