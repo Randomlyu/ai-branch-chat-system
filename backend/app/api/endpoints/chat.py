@@ -1123,21 +1123,10 @@ async def create_branch(
             .count()
         
         # 6. 生成智能分支标题
-        # 首先尝试获取用户的问题
-        user_question_content = None
-        if parent_message.parent_id:
-            # 查找父消息的父消息（用户提问）
-            user_question = db.query(models.Message)\
-              .filter(models.Message.id == parent_message.parent_id)\
-              .first()
-            if user_question and user_question.role == "user":
-                user_question_content = user_question.content
-
-        # 优先使用用户问题生成标题，如果没有则使用AI回复
-        title_source = user_question_content if user_question_content else parent_message.content
-
+        # 使用AI回复（parent_message）的内容生成标题
+        # parent_message是AI消息，包含了AI的回复内容
         thread_title = ai_service.generate_branch_title(
-            parent_message_content=title_source,  # 使用用户问题或AI回复
+            parent_message_content=parent_message.content,  # 使用AI回复内容
             thread_count=thread_count + 1,
             depth=parent_thread.depth + 1
         )

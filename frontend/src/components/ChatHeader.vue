@@ -298,11 +298,13 @@ const handleModelChange = () => {
 /* 简洁模型选择器 */
 .model-selector-simple {
   position: relative;
-  min-width: 160px;
+  min-width: 180px;  /* 设置最小宽度，避免太窄 */
+  width: 200px;      /* 设置固定宽度 */
+  flex-shrink: 0;    /* 防止在flex容器中被压缩 */
 }
 
 .model-select-simple {
-  width: 100%;
+  width: 100%;       /* 使用父容器的100% */
   padding: 8px 12px;
   padding-right: 32px;
   border: 1px solid #d1d5db;
@@ -319,6 +321,7 @@ const handleModelChange = () => {
   background-repeat: no-repeat;
   background-position: right 10px center;
   background-size: 16px;
+  box-sizing: border-box; /* 确保padding和border包含在宽度内 */
 }
 
 .model-select-simple:hover {
@@ -359,10 +362,14 @@ const handleModelChange = () => {
   
   .chat-controls {
     width: 100%;
+    display: flex;
+    justify-content: flex-start; /* 改为左对齐 */
+    padding-top: 8px; /* 添加一些顶部间距 */
   }
   
   .model-selector-simple {
-    min-width: 100%;
+    width: 200px; /* 保持固定宽度 */
+    min-width: 200px; /* 覆盖之前的100% */
   }
 }
 
@@ -386,6 +393,40 @@ const handleModelChange = () => {
   .depth-indicator {
     font-size: 10px;
     padding: 2px 6px;
+  }
+  
+  .chat-controls {
+    justify-content: center; /* 在移动端居中 */
+  }
+  
+  .model-selector-simple {
+    width: 100%; /* 在移动端占满可用空间 */
+    max-width: 300px; /* 但不超过300px */
+  }
+}
+
+/* 超小屏幕优化 */
+@media (max-width: 480px) {
+  .chat-header {
+    padding: 10px 12px;
+  }
+  
+  .conversation-title {
+    font-size: 15px;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+  }
+  
+  .title-text {
+    width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  
+  .model-selector-simple {
+    max-width: 100%; /* 在超小屏幕占满宽度 */
   }
 }
 </style>

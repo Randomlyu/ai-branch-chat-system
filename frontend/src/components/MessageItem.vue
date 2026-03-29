@@ -167,8 +167,125 @@ const isGenerating = computed(() => {
   position: relative;
 }
 
+/* 用户消息右对齐 */
+.message-wrapper.user {
+  align-self: flex-end;
+  flex-direction: row-reverse;
+}
+
+/* 助理消息左对齐 */
+.message-wrapper.assistant {
+  align-self: flex-start;
+  flex-direction: row;
+}
+
+/* 消息内容容器 */
+.message-content {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  /* 设置消息内容的最大宽度 */
+  max-width: 90%; /* 默认占父容器的90% */
+}
+
+/* 消息文本气泡 */
+.message-text {
+  line-height: 1.6;
+  padding: 12px 16px;
+  background: white;
+  border-radius: 12px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  font-size: 15px;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  word-break: break-word;
+  /* 设置消息气泡的最大宽度，不占满整个内容容器 */
+  max-width: 100%; /* 占满.message-content，但.message-content已经有最大宽度限制 */
+  width: fit-content; /* 根据内容自适应宽度 */
+  min-width: auto; /* 最小宽度，避免太短的消息看起来奇怪 */
+}
+
+/* 用户消息气泡样式 */
+.user .message-text {
+  background: #3b82f6;
+  color: white;
+  border: none;
+  border-bottom-right-radius: 4px;
+  /* 用户消息气泡可以稍窄一些 */
+  max-width: 85%; /* 比助理消息稍窄 */
+  margin-left: auto; /* 确保右对齐 */
+   min-width: auto;
+}
+
+/* 助理消息气泡样式 */
+.assistant .message-text {
+  border-bottom-left-radius: 4px;
+  /* 助理消息气泡可以稍宽一些 */
+  max-width: 90%; /* 比用户消息稍宽 */
+  margin-right: auto; /* 确保左对齐 */
+  min-width: auto;
+}
+
+/* 响应式调整：中等屏幕 */
+@media (min-width: 1200px) {
+  .message-content {
+    max-width: 85%; /* 在大屏幕上减小最大宽度 */
+  }
+  
+  .user .message-text {
+    max-width: 80%; /* 大屏幕上用户消息更窄 */
+  }
+  
+  .assistant .message-text {
+    max-width: 85%; /* 大屏幕上助理消息稍宽 */
+  }
+}
+
+/* 响应式调整：小屏幕 */
+@media (max-width: 768px) {
+  .message-content {
+    max-width: 95%; /* 小屏幕上增加最大宽度 */
+  }
+  
+  .user .message-text {
+    max-width: 90%; /* 小屏幕上用户消息稍宽 */
+  }
+  
+  .assistant .message-text {
+    max-width: 95%; /* 小屏幕上助理消息更宽 */
+  }
+  
+  .message-text {
+    min-width: auto; /* 小屏幕上减小最小宽度 */
+  }
+}
+
+/* 响应式调整：超小屏幕 */
+@media (max-width: 480px) {
+  .message-content {
+    max-width: 100%; /* 超小屏幕上占满可用宽度 */
+  }
+  
+  .user .message-text {
+    max-width: 95%; /* 超小屏幕上用户消息几乎占满 */
+  }
+  
+  .assistant .message-text {
+    max-width: 100%; /* 超小屏幕上助理消息占满 */
+  }
+  
+  .message-text {
+    min-width: auto; /* 进一步减小最小宽度 */
+    padding: 10px 12px; /* 减小内边距 */
+    font-size: 14px; /* 减小字体大小 */
+  }
+}
+
 /* 编辑状态的高亮样式 */
-.message-wrapper.is-edting {
+.message-wrapper.is-editing {
   padding: 8px;
   background: linear-gradient(135deg, rgba(59, 130, 246, 0.1) 0%, rgba(59, 130, 246, 0.05) 100%);
   border-radius: 12px;
@@ -183,11 +300,6 @@ const isGenerating = computed(() => {
   50% {
     box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.5);
   }
-}
-
-.message-wrapper.user {
-  align-self: flex-end;
-  flex-direction: row-reverse;
 }
 
 .message-wrapper.user .message-content {
@@ -216,16 +328,6 @@ const isGenerating = computed(() => {
 .assistant .message-avatar {
   background: rgba(16, 185, 129, 0.1);
   color: #10b981;
-}
-
-/* 消息内容 */
-.message-content {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  max-width: 100%;
 }
 
 .message-meta {
@@ -259,32 +361,6 @@ const isGenerating = computed(() => {
 .message-model {
   color: #888;
   font-style: italic;
-}
-
-/* 消息文本 */
-.message-text {
-  line-height: 1.6;
-  padding: 12px 16px;
-  background: white;
-  border-radius: 12px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
-  border: 1px solid rgba(0, 0, 0, 0.06);
-  font-size: 15px;
-  word-wrap: break-word;
-  overflow-wrap: break-word;
-  word-break: break-word;
-  max-width: 100%;
-}
-
-.user .message-text {
-  background: #3b82f6;
-  color: white;
-  border: none;
-  border-bottom-right-radius: 4px;
-}
-
-.assistant .message-text {
-  border-bottom-left-radius: 4px;
 }
 
 /* 生成指示器样式 */
@@ -341,8 +417,6 @@ const isGenerating = computed(() => {
   opacity: 1;
   transform: translateY(0);
 }
-
-/* 之前是 .user .message-actions { display: none; } 现在移除了这个规则 */
 
 /* 消息操作按钮通用样式 */
 .btn-action {

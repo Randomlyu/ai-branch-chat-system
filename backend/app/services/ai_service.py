@@ -10,6 +10,7 @@ from pathlib import Path
 from openai import AsyncOpenAI
 from dotenv import load_dotenv
 import pytz
+from .title_generator import default_title_generator
 
 # 加载环境变量
 load_dotenv()
@@ -473,69 +474,21 @@ class AIService:
     
     def generate_branch_title(self, parent_message_content: str, thread_count: int, depth: int) -> str:
         """
-        生成分支标题的智能函数
+        生成分支标题（调用智能标题生成器）
         
         Args:
-            parent_message_content: 父消息内容
+            parent_message_content: AI回复内容
             thread_count: 线程计数
             depth: 分支深度
             
         Returns:
-            生成的分支标题
+            生成的标题
         """
-        # 去除多余空白
-        content = parent_message_content.strip()
-        
-        # 规则1: 尝试智能提取
-        # 提取第一个完整句子
-        first_sentence_match = re.match(r'^[^。！？.!?]+[。！？.!?]', content)
-        
-        if first_sentence_match:
-            first_sentence = first_sentence_match.group(0)
-            
-            # 去除疑问词、感叹词
-            words_to_remove = ["请问", "你好", "那个", "这个", "什么", "怎么", "如何", "为什么", "?", "？", "!", "！"]
-            cleaned = first_sentence
-            for word in words_to_remove:
-                cleaned = cleaned.replace(word, "")
-            
-            # 提取关键部分（中文字符、英文单词、数字）
-            chinese_chars = re.findall(r'[\u4e00-\u9fff]+', cleaned)
-            english_words = re.findall(r'[a-zA-Z]+', cleaned)
-            numbers = re.findall(r'\d+', cleaned)
-            
-            all_parts = chinese_chars + english_words + numbers
-            
-            if len(all_parts) >= 2:
-                # 取前2-3个部分组合
-                key_parts = all_parts[:min(3, len(all_parts))]
-                title = "".join(key_parts[:2]) if len(key_parts) >= 2 else key_parts[0]
-                
-                # 限制长度
-                if len(title) <= 15 and len(title) >= 2:
-                    return title
-        
-        # 规则2: 回退到关键词提取
-        if len(content) > 0:
-            # 过滤停用词
-            stop_words = ["的", "了", "是", "在", "和", "与", "或", "有", "要", "能", "可以"]
-            words = list(content)
-            filtered_words = [word for word in words if word not in stop_words]
-            
-            if filtered_words:
-                # 取前10个字符
-                title = "".join(filtered_words[:10])
-                if len(title) >= 2:
-                    return title
-        
-        # 规则3: 最终保障
-        # 根据深度使用不同前缀
-        if depth == 1:
-            return f"探索{thread_count}"
-        elif depth == 2:
-            return f"细节{thread_count}"
-        else:
-            return f"方案{thread_count}"
+        return default_title_generator.generate_title(
+            ai_content=parent_message_content,
+            thread_count=thread_count,
+            depth=depth
+        )
     
     def get_usage_info(self) -> Dict[str, Any]:
         """获取用量信息"""

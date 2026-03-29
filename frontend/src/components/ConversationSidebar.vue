@@ -211,41 +211,18 @@ const formatResetTime = (timestamp: string | undefined | null): string => {
       return '未知'
     }
     
-    // 转换为北京时间（如果后端返回的是UTC）
+    // 转换为北京时间
     const beijingTime = new Date(resetTime.getTime() + 8 * 60 * 60 * 1000)
     
-    const now = new Date()
-    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
-    const tomorrow = new Date(today.getTime() + 24 * 60 * 60 * 1000)
+    const year = beijingTime.getUTCFullYear()
+    const month = String(beijingTime.getUTCMonth() + 1).padStart(2, '0')
+    const day = String(beijingTime.getUTCDate()).padStart(2, '0')
+    const hours = String(beijingTime.getUTCHours()).padStart(2, '0')
+    const minutes = String(beijingTime.getUTCMinutes()).padStart(2, '0')
     
-    const resetDate = new Date(
-      beijingTime.getUTCFullYear(),
-      beijingTime.getUTCMonth(),
-      beijingTime.getUTCDate()
-    )
-    
-    // 判断是否是今天重置
-    if (resetDate.getTime() === today.getTime()) {
-      const hours = String(beijingTime.getUTCHours()).padStart(2, '0')
-      const minutes = String(beijingTime.getUTCMinutes()).padStart(2, '0')
-      return `今天 ${hours}:${minutes}`
-    }
-    // 判断是否是明天重置
-    else if (resetDate.getTime() === tomorrow.getTime()) {
-      const hours = String(beijingTime.getUTCHours()).padStart(2, '0')
-      const minutes = String(beijingTime.getUTCMinutes()).padStart(2, '0')
-      return `明天 ${hours}:${minutes}`
-    }
-    // 其他时间
-    else {
-      const month = String(beijingTime.getUTCMonth() + 1).padStart(2, '0')
-      const day = String(beijingTime.getUTCDate()).padStart(2, '0')
-      const hours = String(beijingTime.getUTCHours()).padStart(2, '0')
-      const minutes = String(beijingTime.getUTCMinutes()).padStart(2, '0')
-      return `${month}月${day}日 ${hours}:${minutes}`
-    }
-  } catch (error) {
-    console.error('重置时间格式化错误:', error, timestamp)
+    // 直接显示完整时间，例如：2026-03-30 00:00
+    return `${year}-${month}-${day} ${hours}:${minutes}`
+  } catch {
     return '未知'
   }
 }

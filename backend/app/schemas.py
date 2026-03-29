@@ -1,5 +1,5 @@
 from typing import Optional, List, Dict, Any, Union
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_serializer
 from datetime import datetime, timezone, timedelta
 import pytz
 
@@ -46,11 +46,11 @@ class MessageCreate(MessageBase):
 class Message(MessageBase):
     id: int
     created_at: datetime
-    @field_validator('created_at')
-    @classmethod
-    def convert_to_beijing_time(cls, v: datetime) -> str:
-        """将created_at字段转换为北京时间字符串"""
-        return format_datetime_for_display(v)
+    @field_serializer('created_at')
+    def serialize_created_at(self, created_at: datetime, _info) -> str:
+        """将created_at字段序列化为北京时间字符串"""
+        beijing_time = to_beijing_time(created_at)
+        return beijing_time.isoformat()
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -80,11 +80,11 @@ class Thread(ThreadBase):
     
     # 可选的子线程列表（用于API响应，便于前端构建树）
     child_threads: Optional[List["Thread"]] = None
-    @field_validator('created_at', 'updated_at')
-    @classmethod
-    def convert_to_beijing_time(cls, v: datetime) -> str:
-        """将时间字段转换为北京时间字符串"""
-        return format_datetime_for_display(v)
+    @field_serializer('created_at', 'updated_at')
+    def serialize_datetime_fields(self, dt: datetime, _info) -> str:
+        """将时间字段序列化为北京时间字符串"""
+        beijing_time = to_beijing_time(dt)
+        return beijing_time.isoformat()
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -105,11 +105,11 @@ class Conversation(ConversationBase):
     user_id: Optional[int] = None
     created_at: datetime
     updated_at: datetime
-    @field_validator('created_at', 'updated_at')
-    @classmethod
-    def convert_to_beijing_time(cls, v: datetime) -> str:
-        """将时间字段转换为北京时间字符串"""
-        return format_datetime_for_display(v)
+    @field_serializer('created_at', 'updated_at')
+    def serialize_datetime_fields(self, dt: datetime, _info) -> str:
+        """将时间字段序列化为北京时间字符串"""
+        beijing_time = to_beijing_time(dt)
+        return beijing_time.isoformat()
     model_config = ConfigDict(from_attributes=True)
 
 

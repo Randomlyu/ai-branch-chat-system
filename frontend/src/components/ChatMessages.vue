@@ -13,7 +13,7 @@
         :delete-title="getDeleteButtonTitle(msg)"
         :can-edit="canEditMessage(msg)"
         :edit-title="getEditButtonTitle(msg)"
-        :formatted-time="formatTime(msg.created_at)"
+        :formatted-time="formatDateTime(msg.created_at)"
         :formatted-content="formatMessage(msg.content)"
         :formatted-model-name="msg.model_used ? getModelDisplayName(msg.model_used) : ''"
         @copy="handleCopyMessage"
@@ -23,14 +23,6 @@
         @edit="handleEditMessage"
       />
     </div>
-    
-    <!-- 思考指示器 -->
-    <div v-if="isLoading" class="thinking-indicator">
-      <div class="thinking-dots">
-        <span></span><span></span><span></span>
-      </div>
-      <div class="thinking-text">AI正在思考...</div>
-    </div>
   </div>
 </template>
 
@@ -38,7 +30,7 @@
 import { ref, nextTick } from 'vue'
 import MessageItem from './MessageItem.vue'
 import { 
-  formatTime, 
+  formatDateTime, 
   formatMessage, 
   getModelDisplayName 
 } from '@/utils/formatters'
@@ -48,8 +40,6 @@ import type { Message } from '@/types/chat'
 const props = defineProps<{
   messages: Message[]
   isStreaming: boolean
-  isLoading: boolean
-  streamingModel?: string
   isMessageBranchingPoint?: (messageId: number) => boolean
 }>()
 
@@ -60,7 +50,6 @@ const emit = defineEmits<{
   'branch': [messageId: number]
   'delete': [messageId: number]
   'edit': [messageId: number]
-  'stop': []
 }>()
 
 // 模板引用
@@ -289,48 +278,6 @@ defineExpose({
   from {
     opacity: 0;
     transform: translateY(10px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-/* 思考指示器 */
-.thinking-indicator {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 12px;
-  padding: 20px;
-  color: #666;
-}
-
-.thinking-dots {
-  display: flex;
-  gap: 4px;
-}
-
-.thinking-dots span {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: #3b82f6;
-  animation: bounce 1.4s infinite ease-in-out both;
-}
-
-.thinking-dots span:nth-child(1) { animation-delay: -0.32s; }
-.thinking-dots span:nth-child(2) { animation-delay: -0.16s; }
-
-@keyframes bounce {
-  0%, 80%, 100% { transform: scale(0); }
-  40% { transform: scale(1.0); }
-}
-
-@keyframes slideDown {
-  from {
-    opacity: 0;
-    transform: translateY(-10px);
   }
   to {
     opacity: 1;

@@ -1,7 +1,7 @@
 /**
  * 时间格式化工具函数
  * @param timestamp 时间字符串或日期对象
- * @returns 格式化的时间字符串 (HH:MM)
+ * @returns 格式化的时间字符串 (MM/DD HH:MM)
  */
 export const formatTime = (timestamp: string | Date | undefined): string => {
   if (!timestamp) return '--'
@@ -18,8 +18,13 @@ export const formatTime = (timestamp: string | Date | undefined): string => {
     // 将UTC时间转换为北京时间（UTC+8）
     const beijingTime = new Date(date.getTime() + 8 * 60 * 60 * 1000)
     
-    // 格式化为 HH:MM
-    return beijingTime.toISOString().substr(11, 5)
+    // 格式化为 YYYY-MM-DD HH:MM
+    const month = String(beijingTime.getUTCMonth() + 1).padStart(2, '0')
+    const day = String(beijingTime.getUTCDate()).padStart(2, '0')
+    const hours = String(beijingTime.getUTCHours()).padStart(2, '0')
+    const minutes = String(beijingTime.getUTCMinutes()).padStart(2, '0')  
+    
+    return `${month}/${day} ${hours}:${minutes}`
   } catch (error) {
     console.error('时间格式化错误:', error, timestamp)
     return '--'
@@ -29,7 +34,7 @@ export const formatTime = (timestamp: string | Date | undefined): string => {
 /**
  * 格式化完整日期时间
  * @param timestamp 时间字符串或日期对象
- * @returns 格式化的日期时间字符串 (YYYY-MM-DD HH:MM:SS)
+ * @returns 格式化的日期时间字符串 (YYYY/MM/DD HH:MM)
  */
 export const formatDateTime = (timestamp: string | Date | undefined): string => {
   if (!timestamp) return '--'
@@ -44,15 +49,14 @@ export const formatDateTime = (timestamp: string | Date | undefined): string => 
     // 转换为北京时间
     const beijingTime = new Date(date.getTime() + 8 * 60 * 60 * 1000)
     
-    // 格式化为 YYYY-MM-DD HH:MM:SS
+    // 格式化为 YYYY-MM-DD HH:MM
     const year = beijingTime.getUTCFullYear()
     const month = String(beijingTime.getUTCMonth() + 1).padStart(2, '0')
     const day = String(beijingTime.getUTCDate()).padStart(2, '0')
     const hours = String(beijingTime.getUTCHours()).padStart(2, '0')
-    const minutes = String(beijingTime.getUTCMinutes()).padStart(2, '0')
-    const seconds = String(beijingTime.getUTCSeconds()).padStart(2, '0')
+    const minutes = String(beijingTime.getUTCMinutes()).padStart(2, '0')  
     
-    return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`
+    return `${year}/${month}/${day} ${hours}:${minutes}`
   } catch (error) {
     console.error('日期时间格式化错误:', error, timestamp)
     return '--'
