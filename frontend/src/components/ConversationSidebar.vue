@@ -21,6 +21,8 @@
         </button>
       </div>
     </div>
+    
+    <!-- 对话列表区域 -->
     <div class="conversations-list">
       <div
         v-for="conv in conversations"
@@ -70,7 +72,7 @@
     </div>
     
     <!-- AI用量信息 -->
-    <div class="usage-info" v-if="aiUsage">
+    <div class="usage-info" v-if="aiUsage && !isCollapsed">
       <div class="usage-title">用量统计</div>
       <div class="usage-progress">
         <div 
@@ -265,7 +267,16 @@ defineExpose({
 </script>
 
 <style scoped>
-/* 左侧边栏 */
+/* 左侧边栏基础布局 */
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  background: white;
+  position: relative;
+  transition: all 0.3s ease;
+}
+
 .left-sidebar {
   width: 320px;
   min-width: 320px;
@@ -275,8 +286,8 @@ defineExpose({
 
 /* 侧边栏收起状态 */
 .left-sidebar.collapsed {
-  width: 48px;
-  min-width: 48px;
+  width: 60px;
+  min-width: 60px;
   overflow: visible;
 }
 
@@ -284,14 +295,8 @@ defineExpose({
 .left-sidebar.collapsed .sidebar-header h2,
 .left-sidebar.collapsed .conversations-list,
 .left-sidebar.collapsed .usage-info,
-.left-sidebar.collapsed .sidebar-footer,
 .left-sidebar.collapsed .btn-new-chat {
   display: none;
-}
-
-.sidebar.collapsed {
-  min-height: 100vh;
-  position: relative;
 }
 
 /* 侧边栏头部 */
@@ -305,8 +310,8 @@ defineExpose({
   background: rgba(255, 255, 255, 0.9);
 }
 
-.sidebar.collapsed .sidebar-header {
-  padding: 16px 8px;
+.left-sidebar.collapsed .sidebar-header {
+  padding: 16px 0;
   justify-content: center;
   border-bottom: none;
   height: 100%;
@@ -331,7 +336,7 @@ defineExpose({
   gap: 8px;
 }
 
-.sidebar.collapsed .sidebar-header-actions {
+.left-sidebar.collapsed .sidebar-header-actions {
   flex-direction: column;
   gap: 8px;
   align-items: center;
@@ -339,65 +344,25 @@ defineExpose({
   width: 100%;
 }
 
-/* 侧边栏内容区域 */
+/* 对话列表区域 - 占据主要空间 */
 .conversations-list {
-  flex: 1;
+  flex: 1; /* 占据所有可用空间 */
   overflow-y: auto;
   padding: 12px 16px;
-  min-height: 0;
+  min-height: 0; /* 允许在flex容器内滚动 */
+  border-bottom: 1px solid rgba(0, 0, 0, 0.08);
 }
 
-/* 侧边栏页脚 */
-.sidebar-footer {
-  padding: 16px 20px;
-  border-top: 1px solid rgba(0, 0, 0, 0.08);
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  flex-shrink: 0;
+.left-sidebar.collapsed .conversations-list {
+  display: none;
 }
 
-.user-avatar {
-  width: 36px;
-  height: 36px;
-  border-radius: 50%;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  color: white;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-weight: bold;
-  flex-shrink: 0;
-}
-
-.user-info {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-}
-
-.username {
-  font-weight: 600;
-  font-size: 14px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.user-email {
-  font-size: 12px;
-  color: #666;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-/* 用量信息 */
+/* 用量信息 - 固定在对话列表下方 */
 .usage-info {
+  flex-shrink: 0; /* 防止被压缩 */
   padding: 16px 20px;
-  border-top: 1px solid rgba(0, 0, 0, 0.08);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.08);
   background: rgba(249, 250, 251, 0.8);
-  flex-shrink: 0;
 }
 
 .usage-title {
@@ -457,7 +422,7 @@ defineExpose({
   text-align: center;
 }
 
-/* 对话项 */
+/* 对话项样式保持不变 */
 .conversation-item {
   padding: 12px 16px 12px 12px;
   border-radius: 8px;
@@ -489,7 +454,6 @@ defineExpose({
   border-color: rgba(59, 130, 246, 0.2);
 }
 
-/* 对话图标 */
 .conv-icon {
   font-size: 16px;
   flex-shrink: 0;
@@ -497,7 +461,6 @@ defineExpose({
   text-align: center;
 }
 
-/* 对话标题容器 */
 .conv-title-container {
   flex: 1;
   min-width: 0;
@@ -534,7 +497,6 @@ defineExpose({
   box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
 }
 
-/* 对话时间 */
 .conv-time {
   font-size: 11px;
   color: #888;
@@ -544,7 +506,6 @@ defineExpose({
   white-space: nowrap;
 }
 
-/* 三点菜单按钮 */
 .conversation-menu-btn {
   width: 28px;
   height: 28px;
@@ -586,12 +547,10 @@ defineExpose({
   color: #374151;
 }
 
-/* 当侧边栏收起时，隐藏三点按钮 */
 .left-sidebar.collapsed .conversation-menu-btn {
   display: none;
 }
 
-/* 空状态提示 */
 .empty-tip {
   padding: 20px 12px;
   text-align: center;
@@ -600,7 +559,6 @@ defineExpose({
   font-style: italic;
 }
 
-/* 新对话按钮 */
 .btn-new-chat {
   background: linear-gradient(135deg, #3b82f6, #8b5cf6);
   color: white;
@@ -637,7 +595,6 @@ defineExpose({
   transform: rotate(90deg);
 }
 
-/* 左侧边栏收起按钮样式 - 与右侧统一 */
 .btn-toggle-sidebar {
   width: 36px;
   height: 36px;
