@@ -92,13 +92,13 @@
       <div class="usage-date" v-else>重置时间: 未知</div>
     </div>
     
-    <div class="sidebar-footer">
-      <div class="user-avatar">U</div>
-      <div class="user-info">
-        <div class="username">开发者</div>
-        <div class="user-email">dev@example.com</div>
-      </div>
-    </div>
+    <UserInfo
+      :collapsed="isCollapsed"
+      :show-change-password-button="!isCollapsed"
+      @change-password="$emit('change-password')"
+      @logout="$emit('logout')"
+      @toggle-collapsed="$emit('toggle-collapse')"
+    />
   </aside>
 </template>
 
@@ -106,6 +106,7 @@
 import { ref, nextTick, computed } from 'vue'
 import { formatTime, formatNumber } from '@/utils/formatters'
 import type { Conversation } from '@/types/chat'
+import UserInfo from '@/components/UserInfo.vue'
 
 // 定义Props
 const props = defineProps<{
@@ -131,6 +132,8 @@ const emit = defineEmits<{
   'delete-conversation': [id: number]
   'toggle-collapse': []
   'show-context-menu': [conversation: Conversation, event: MouseEvent]
+  'change-password': [] 
+  'logout': [] 
 }>()
 
 // 本地状态

@@ -197,4 +197,41 @@ export interface UpdateUserMessageResponse {
     thread_id: number
   }
 }
+
+// ========== 认证相关类型 ==========
+export interface LoginRequest {
+  username: string
+  password: string
+}
+
+export interface LoginResponse {
+  access_token: string
+  refresh_token: string
+  token_type: string
+  user_id: number
+  username: string
+  need_password_change: boolean
+}
+
+export interface RefreshTokenRequest {
+  refresh_token: string
+}
+
+export interface RefreshTokenResponse {
+  access_token: string
+  token_type: string
+}
+
+export interface ChangePasswordRequest {
+  current_password: string
+  new_password: string
+}
+
+export interface UserInfo {
+  id: number
+  username: string
+  email?: string
+  need_password_change: boolean
+  created_at: string
+}
 // ===================================

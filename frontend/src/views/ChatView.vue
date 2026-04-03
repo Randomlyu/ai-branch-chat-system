@@ -82,6 +82,14 @@
       @confirm="confirmDeleteThread"
       @cancel="cancelDeleteThread"
     />
+    
+    <!-- 修改密码模态框 -->
+    <ChangePassword
+      v-model:visible="showChangePassword"
+      :is-required="false"
+      @success="handlePasswordChangeSuccess"
+      @close="showChangePassword = false"
+    />
 
     <!-- 左侧边栏：对话列表 -->
     <ConversationSidebar
@@ -96,6 +104,8 @@
       @delete-conversation="handleDeleteConversation"
       @toggle-collapse="toggleLeftSidebar"
       @show-context-menu="showConversationMenu"
+      @change-password="handleChangePassword" 
+      @logout="handleLogout" 
       ref="conversationSidebarRef"
     />
 
@@ -173,6 +183,8 @@ import { ref, onMounted, nextTick, watch, computed, onBeforeUnmount } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useChatStore } from '@/stores/chat'
 import type { Conversation } from '@/types/chat'
+import { useAuthStore } from '@/stores/auth'  // 新增导入
+import ChangePassword from '@/components/ChangePassword.vue'  // 新增导入
 
 // 导入组件
 import AppToast from '@/components/AppToast.vue'
@@ -197,6 +209,7 @@ const { toast, showToast } = useToast()
 
 // ---------- 状态与Store ----------
 const chatStore = useChatStore()
+const authStore = useAuthStore()  // 新增
 const {
   conversations,
   currentConversation,
@@ -224,6 +237,7 @@ const conversationSidebarRef = ref<InstanceType<typeof ConversationSidebar>>()
 const chatMessagesRef = ref<InstanceType<typeof ChatMessages>>()
 const isRightSidebarCollapsed = ref(false)
 const isLeftSidebarCollapsed = ref(false)
+const showChangePassword = ref(false)  // 新增：控制修改密码模态框显示
 
 // ---------- 删除对话相关状态 ----------
 const showDeleteConfirm = ref(false)
@@ -259,6 +273,49 @@ const canSendMessage = computed(() => {
 const isMockModeAvailable = computed(() => {
   return availableModels.value.includes('模拟模式')
 })
+
+// ---------- 事件处理方法 ----------
+/**
+ * 处理修改密码请求
+ */
+const handleChangePassword = () => {
+  if (isStreaming.value) {
+    showToast('请等待生成完成后再修改密码', 'error')
+    return
+  }
+  showChangePassword.value = true
+}
+
+/**
+ * 处理登出请求
+ */
+const handleLogout = async () => {
+  if (isStreaming.value) {
+    showToast('请等待生成完成后再退出登录', 'error')
+    return
+  }
+  
+  try {
+    // 先显示Toast
+    showToast('正在退出登录...', 'success')
+    // 短暂延迟后执行登出
+    setTimeout(() => {
+      authStore.logout()
+    }, 500)
+    showToast('已退出登录')
+  } catch (error) {
+    console.error('登出失败:', error)
+    showToast('登出失败，请重试', 'error')
+  }
+}
+
+/**
+ * 处理密码修改成功
+ */
+const handlePasswordChangeSuccess = () => {
+  showChangePassword.value = false
+  showToast('密码修改成功', 'success')
+}
 
 // ---------- 侧边栏方法 ----------
 /**

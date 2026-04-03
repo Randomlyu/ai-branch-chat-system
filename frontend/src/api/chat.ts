@@ -12,13 +12,14 @@ import type {
   ThreadDeleteInfo,
   CreateBranchRequest,
   AIUsageInfo,
-  // ===== 新增导入 =====
   CheckMessageEditableRequest,
   CheckMessageEditableResponse,
   UpdateUserMessageRequest,
   UpdateUserMessageResponse
-  // ===================
 } from '@/types/chat'
+
+// 导入认证存储
+import { useAuthStore } from '@/stores/auth'
 
 // ========== 创建axios实例 ==========
 const apiClient = axios.create({
@@ -32,11 +33,15 @@ const apiClient = axios.create({
 // ========== 请求拦截器 ==========
 apiClient.interceptors.request.use(
   (config) => {
-    // 添加固定Token（使用alice的Token）
-    if (config.headers) {
-      config.headers.Authorization = 'Bearer dev_token_alice'
-    } else {
-      config.headers = new axios.AxiosHeaders({ Authorization: 'Bearer dev_token_alice' })
+    const authStore = useAuthStore()
+    
+    // 添加认证Token
+    if (authStore.accessToken) {
+      if (config.headers) {
+        config.headers.Authorization = `Bearer ${authStore.accessToken}`
+      } else {
+        config.headers = new axios.AxiosHeaders({ Authorization: `Bearer ${authStore.accessToken}` })
+      }
     }
     
     console.log(`请求: ${config.method?.toUpperCase()} ${config.baseURL}${config.url}`)
@@ -65,8 +70,34 @@ apiClient.interceptors.response.use(
       message: 'success'
     }
   },
-  (error) => {
+  async (error) => {
     console.error('API请求错误:', error)
+    
+    // 处理401未授权错误 - 尝试刷新令牌
+    if (error.response?.status === 401) {
+      const authStore = useAuthStore()
+      
+      // 检查是否是登录端点，如果是则直接返回错误
+      if (error.config.url?.includes('/auth/login')) {
+        return Promise.reject(error)
+      }
+      
+      // 尝试刷新令牌
+      try {
+        await authStore.refreshAccessToken()
+        
+        // 使用新令牌重试原始请求
+        if (authStore.accessToken) {
+          error.config.headers.Authorization = `Bearer ${authStore.accessToken}`
+          return apiClient(error.config)
+        }
+      } catch (refreshError) {
+        // 刷新失败，跳转到登录页
+        authStore.logout()
+        window.location.href = '/login'
+        return Promise.reject(new Error('会话已过期，请重新登录'))
+      }
+    }
     
     // 统一错误处理
     if (error.response) {
@@ -128,13 +159,14 @@ export async function sendStreamRequest(
   config: StreamRequestConfig
 ): Promise<void> {
   const { onMessage, onError, onComplete, signal } = config
+  const authStore = useAuthStore()
   
   try {
     const response = await fetch(`${apiClient.defaults.baseURL}${url}`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': 'Bearer dev_token_alice'
+        'Authorization': `Bearer ${authStore.accessToken}`
       },
       body: JSON.stringify(data),
       signal
@@ -204,6 +236,77 @@ export async function sendStreamRequest(
       }
     }
   }
+}
+
+// ========== 认证相关API ==========
+// 登录请求接口
+export interface LoginRequest {
+  username: string
+  password: string
+}
+
+// 登录响应接口
+export interface LoginResponse {
+  access_token: string
+  refresh_token: string
+  token_type: string
+  user_id: number
+  username: string
+  need_password_change: boolean
+}
+
+// 刷新令牌请求接口
+export interface RefreshTokenRequest {
+  refresh_token: string
+}
+
+// 刷新令牌响应接口
+export interface RefreshTokenResponse {
+  access_token: string
+  token_type: string
+}
+
+// 修改密码请求接口
+export interface ChangePasswordRequest {
+  current_password: string
+  new_password: string
+}
+
+// 用户信息接口
+export interface UserInfo {
+  id: number
+  username: string
+  email?: string
+  need_password_change: boolean
+  created_at: string
+}
+
+/**
+ * 用户登录
+ */
+export const login = async (data: LoginRequest): Promise<ApiResponse<LoginResponse>> => {
+  return apiClient.post('/auth/login', data)
+}
+
+/**
+ * 刷新访问令牌
+ */
+export const refreshToken = async (data: RefreshTokenRequest): Promise<ApiResponse<RefreshTokenResponse>> => {
+  return apiClient.post('/auth/refresh', data)
+}
+
+/**
+ * 修改密码
+ */
+export const changePassword = async (data: ChangePasswordRequest): Promise<ApiResponse<void>> => {
+  return apiClient.post('/auth/change-password', data)
+}
+
+/**
+ * 获取当前用户信息
+ */
+export const getCurrentUser = async (): Promise<ApiResponse<UserInfo>> => {
+  return apiClient.get('/auth/me')
 }
 
 // ========== 对话相关API ==========
@@ -377,6 +480,12 @@ export const createBranch = async (data: CreateBranchRequest): Promise<ApiRespon
 
 // ========== 默认导出 ==========
 export default {
+  // 认证相关
+  login,
+  refreshToken,
+  changePassword,
+  getCurrentUser,
+  
   // 对话相关
   getConversations,
   getConversation,

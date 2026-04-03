@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import HTTPBearer
 from sqlalchemy.orm import Session
@@ -111,34 +113,53 @@ async def change_password(
     """
     修改密码
     """
-    # 验证当前密码
-    if not verify_password(change_data.current_password, current_user.hashed_password):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="当前密码错误"
+    try:
+        logger = logging.getLogger(__name__)
+        logger.info(f"修改密码请求 - 用户: {current_user.username}, ID: {current_user.id}")
+        logger.info(f"请求数据: {change_data.dict()}")
+        
+        # 验证当前密码
+        if not verify_password(change_data.current_password, current_user.hashed_password):
+            logger.warning(f"密码验证失败 - 用户: {current_user.username}")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="当前密码错误"
+            )
+        
+        # 验证新密码
+        validate_password(change_data.new_password)
+        
+        # 新密码不能与旧密码相同
+        if verify_password(change_data.new_password, current_user.hashed_password):
+            logger.warning(f"新密码与旧密码相同 - 用户: {current_user.username}")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="新密码不能与当前密码相同"
+            )
+        
+        # 更新密码
+        current_user.hashed_password = get_password_hash(change_data.new_password)
+        current_user.need_password_change = False
+        current_user.updated_at = datetime.now(timezone.utc)
+        
+        db.commit()
+        
+        logger.info(f"密码修改成功 - 用户: {current_user.username}")
+        
+        return ChangePasswordResponse(
+            code=200,
+            message="密码修改成功"
         )
-    
-    # 验证新密码
-    validate_password(change_data.new_password)
-    
-    # 新密码不能与旧密码相同
-    if verify_password(change_data.new_password, current_user.hashed_password):
+        
+    except HTTPException as e:
+        logger.error(f"修改密码HTTP异常: {e.detail}")
+        raise
+    except Exception as e:
+        logger.error(f"修改密码异常: {str(e)}")
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="新密码不能与当前密码相同"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"修改密码失败: {str(e)}"
         )
-    
-    # 更新密码
-    current_user.hashed_password = get_password_hash(change_data.new_password)
-    current_user.need_password_change = False
-    current_user.updated_at = datetime.now(timezone.utc)
-    
-    db.commit()
-    
-    return ChangePasswordResponse(
-        code=200,
-        message="密码修改成功"
-    )
 
 @router.get("/me", response_model=UserInfo)
 async def get_current_user_info(
