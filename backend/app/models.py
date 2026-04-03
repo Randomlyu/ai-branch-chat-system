@@ -143,5 +143,8 @@ class User(Base):
     email = Column(String(100), unique=True, index=True)
     hashed_password = Column(String(255))
     is_active = Column(Boolean, default=True, index=True)
+    need_password_change = Column(Boolean, default=True, index=True, server_default='1')
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now(), server_default=func.now())
+    # 添加与Conversation的关系
+    conversations = relationship("Conversation", backref="user", cascade="all, delete-orphan")

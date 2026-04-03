@@ -14,6 +14,7 @@ from ...services import ai_service
 from ...services.deletion_manager import DeletionManager
 # 从新的auth模块导入认证依赖
 from ...auth import get_current_user
+from ...models import User  # 添加User模型导入
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -30,7 +31,7 @@ BRANCH_ONLY_AT_LATEST = os.getenv("BRANCH_ONLY_AT_LATEST", "true").lower() == "t
 @router.post("/conversations/", response_model=schemas.Conversation)
 def create_conversation(
     conversation: schemas.ConversationCreate,
-    current_user: dict = Depends(get_current_user),  # 添加认证
+    current_user: User = Depends(get_current_user),  # 修改为User类型
     db: Session = Depends(get_db)
 ):
     """创建新对话"""
@@ -38,7 +39,7 @@ def create_conversation(
         # 使用认证用户ID
         db_conversation = models.Conversation(
             title=conversation.title,
-            user_id=current_user["id"],  # 使用认证用户ID
+            user_id=current_user.id,  # 修改为属性访问
             created_at=datetime.utcnow(),
             updated_at=datetime.utcnow()
         )
@@ -74,14 +75,14 @@ def create_conversation(
 def read_conversations(
     skip: int = 0,
     limit: int = 100,
-    current_user: dict = Depends(get_current_user),  # 添加认证
+    current_user: User = Depends(get_current_user),  # 修改为User类型
     db: Session = Depends(get_db)
 ):
     """获取当前用户的对话列表（按更新时间倒序）"""
     try:
         conversations = (
            db.query(models.Conversation)
-           .filter(models.Conversation.user_id == current_user["id"])  # 只返回当前用户的对话
+           .filter(models.Conversation.user_id == current_user.id)  # 修改为属性访问
            .order_by(models.Conversation.updated_at.desc())
            .offset(skip)
            .limit(limit)
@@ -99,7 +100,7 @@ def read_conversations(
 @router.get("/conversations/{conversation_id}", response_model=schemas.Conversation)
 def read_conversation(
     conversation_id: int,
-    current_user: dict = Depends(get_current_user),  # 添加认证
+    current_user: User = Depends(get_current_user),  # 修改为User类型
     db: Session = Depends(get_db)
 ):
     """获取对话详情"""
@@ -114,7 +115,7 @@ def read_conversation(
         )
     
     # 验证所有权
-    if db_conversation.user_id != current_user["id"]:
+    if db_conversation.user_id != current_user.id:  # 修改为属性访问
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="无权访问此对话"
@@ -127,7 +128,7 @@ def read_conversation(
 def update_conversation(
     conversation_id: int,
     conversation: schemas.ConversationUpdate,
-    current_user: dict = Depends(get_current_user),  # 添加认证
+    current_user: User = Depends(get_current_user),  # 修改为User类型
     db: Session = Depends(get_db)
 ):
     """更新对话标题"""
@@ -142,7 +143,7 @@ def update_conversation(
         )
     
     # 验证所有权
-    if db_conversation.user_id != current_user["id"]:
+    if db_conversation.user_id != current_user.id:  # 修改为属性访问
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="无权修改此对话"
@@ -163,7 +164,7 @@ def update_conversation(
 @router.delete("/conversations/{conversation_id}")
 def delete_conversation(
     conversation_id: int,
-    current_user: dict = Depends(get_current_user),  # 添加认证
+    current_user: User = Depends(get_current_user),  # 修改为User类型
     db: Session = Depends(get_db)
 ):
     """
@@ -181,7 +182,7 @@ def delete_conversation(
                 detail="对话不存在"
             )
         
-        if conversation.user_id != current_user["id"]:
+        if conversation.user_id != current_user.id:  # 修改为属性访问
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="无权删除此对话"
@@ -191,7 +192,7 @@ def delete_conversation(
         manager = DeletionManager(db)
         
         # 执行删除
-        success, message = manager.delete_conversation(conversation_id, current_user["id"])
+        success, message = manager.delete_conversation(conversation_id, current_user.id)  # 修改为属性访问
         
         if not success:
             raise HTTPException(
@@ -216,7 +217,7 @@ def delete_conversation(
 @router.get("/conversations/{conversation_id}/threads", response_model=List[schemas.Thread])
 def get_conversation_threads(
     conversation_id: int,
-    current_user: dict = Depends(get_current_user),  # 添加认证
+    current_user: User = Depends(get_current_user),  # 修改为User类型
     db: Session = Depends(get_db)
 ):
     """获取对话的所有线程"""
@@ -231,7 +232,7 @@ def get_conversation_threads(
             detail="对话不存在"
         )
     
-    if conversation.user_id != current_user["id"]:
+    if conversation.user_id != current_user.id:  # 修改为属性访问
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="无权访问此对话"
@@ -249,7 +250,7 @@ def get_conversation_threads(
 @router.get("/conversations/{conversation_id}/thread-tree")
 def get_conversation_thread_tree(
     conversation_id: int,
-    current_user: dict = Depends(get_current_user),  # 添加认证
+    current_user: User = Depends(get_current_user),  # 修改为User类型
     db: Session = Depends(get_db)
 ):
     """获取对话的线程树结构，用于前端可视化"""
@@ -264,7 +265,7 @@ def get_conversation_thread_tree(
             detail="对话不存在"
         )
     
-    if conversation.user_id != current_user["id"]:
+    if conversation.user_id != current_user.id:  # 修改为属性访问
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="无权访问此对话"
@@ -332,7 +333,7 @@ def get_conversation_thread_tree(
 @router.get("/threads/{thread_id}", response_model=schemas.Thread)
 def get_thread(
     thread_id: int,
-    current_user: dict = Depends(get_current_user),  # 添加认证
+    current_user: User = Depends(get_current_user),  # 修改为User类型
     db: Session = Depends(get_db)
 ):
     """获取线程详情"""
@@ -351,7 +352,7 @@ def get_thread(
         .filter(models.Conversation.id == thread.conversation_id)\
         .first()
     
-    if conversation and conversation.user_id != current_user["id"]:
+    if conversation and conversation.user_id != current_user.id:  # 修改为属性访问
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="无权访问此线程"
@@ -363,7 +364,7 @@ def get_thread(
 def update_thread_title(
     thread_id: int,
     thread_update: schemas.ThreadUpdate,  # 需要创建这个Pydantic模型
-    current_user: dict = Depends(get_current_user),  # 添加认证
+    current_user: User = Depends(get_current_user),  # 修改为User类型
     db: Session = Depends(get_db)
 ):
     """更新线程标题"""
@@ -388,7 +389,7 @@ def update_thread_title(
             detail="对话不存在"
         )
     
-    if conversation.user_id != current_user["id"]:
+    if conversation.user_id != current_user.id:  # 修改为属性访问
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="无权修改此线程"
@@ -406,7 +407,7 @@ def update_thread_title(
 @router.delete("/threads/{thread_id}", response_model=schemas.DeleteThreadResponse)
 def delete_thread(
     thread_id: int,
-    current_user: dict = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),  # 修改为User类型
     db: Session = Depends(get_db)
 ):
     """
@@ -436,7 +437,7 @@ def delete_thread(
                 detail="对话不存在"
             )
         
-        if conversation.user_id != current_user["id"]:
+        if conversation.user_id != current_user.id:  # 修改为属性访问
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="无权删除此线程"
@@ -517,7 +518,7 @@ def delete_thread(
 @router.get("/threads/{thread_id}/messages", response_model=List[schemas.Message])
 def get_thread_messages(
     thread_id: int,
-    current_user: dict = Depends(get_current_user),  # 添加认证
+    current_user: User = Depends(get_current_user),  # 修改为User类型
     db: Session = Depends(get_db)
 ):
     """获取线程的所有消息"""
@@ -537,7 +538,7 @@ def get_thread_messages(
         .filter(models.Conversation.id == thread.conversation_id)\
         .first()
     
-    if conversation and conversation.user_id != current_user["id"]:
+    if conversation and conversation.user_id != current_user.id:  # 修改为属性访问
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="无权访问此线程"
@@ -557,7 +558,7 @@ def get_thread_messages(
 @router.post("/chat/stream/")
 async def send_message_stream(
     request: schemas.SendMessageRequest,
-    current_user: dict = Depends(get_current_user),  # 添加认证
+    current_user: User = Depends(get_current_user),  # 修改为User类型
     db: Session = Depends(get_db)
 ):
     """
@@ -582,7 +583,7 @@ async def send_message_stream(
                 .filter(models.Conversation.id == thread.conversation_id)\
                 .first()
             
-            if conversation and conversation.user_id != current_user["id"]:
+            if conversation and conversation.user_id != current_user.id:  # 修改为属性访问
                 error_data = json.dumps({
                     "content": "无权在此对话中发送消息",
                     "error": True,
@@ -633,7 +634,7 @@ async def send_message_stream(
             stream_generator = ai_service.stream_chat_completion(
                 messages=ai_messages,
                 model=model,
-                user_id=current_user["username"]  # 传递用户名作为用户标识
+                user_id=current_user.username  # 修改为属性访问
             )
             
             try:
@@ -719,11 +720,11 @@ async def send_message_stream(
 
 @router.post("/chat/stop/")
 async def stop_generation(
-    current_user: dict = Depends(get_current_user)
+    current_user: User = Depends(get_current_user)  # 修改为User类型
 ):
     """停止当前用户的流式生成"""
     try:
-        ai_service.stop_user_request(current_user["username"])
+        ai_service.stop_user_request(current_user.username)  # 修改为属性访问
         return {
             "code": 200,
             "message": "已发送停止请求",
@@ -740,7 +741,7 @@ async def stop_generation(
 def delete_message(
     thread_id: int,
     message_id: int,
-    current_user: dict = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),  # 修改为User类型
     db: Session = Depends(get_db)
 ):
     """
@@ -770,7 +771,7 @@ def delete_message(
                 detail="对话不存在"
             )
         
-        if conversation.user_id != current_user["id"]:
+        if conversation.user_id != current_user.id:  # 修改为属性访问
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="无权删除此线程中的消息"
@@ -792,7 +793,7 @@ def delete_message(
         manager = DeletionManager(db)
         success, message_text, delete_info = manager.delete_message_pair(
             message_id, 
-            current_user["id"]
+            current_user.id  # 修改为属性访问
         )
         
         if not success:
@@ -821,7 +822,7 @@ async def regenerate_message_stream(
     thread_id: int,
     message_id: int,
     request: schemas.RegenerateMessageRequest,
-    current_user: dict = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),  # 修改为User类型
     db: Session = Depends(get_db)
 ):
     """
@@ -841,7 +842,7 @@ async def regenerate_message_stream(
                 ai_message_id=message_id,
                 model=request.model,
                 stream=True,  # 总是使用流式
-                user_id=current_user["id"]
+                user_id=current_user.id  # 修改为属性访问
             )
             
             if not can_regenerate:
@@ -908,7 +909,7 @@ async def regenerate_message_stream(
             ai_stream_generator = ai_service.stream_chat_completion(
                 messages=ai_messages,
                 model=model_to_use,
-                user_id=current_user["username"]
+                user_id=current_user.username  # 修改为属性访问
             )
             
             # 流式生成内容
@@ -942,7 +943,7 @@ async def regenerate_message_stream(
                 db.refresh(new_ai_message)
                 
                 # 只删除AI消息，保留用户消息
-                success, message, delete_info = manager.delete_ai_message_only(message_id, current_user["id"])
+                success, message, delete_info = manager.delete_ai_message_only(message_id, current_user.id)  # 修改为属性访问
                 if not success:
                   logger.error(f"删除旧AI消息失败: {message}")
                   # 继续执行，因为我们需要创建新消息
@@ -1004,7 +1005,7 @@ async def regenerate_message_stream(
 
 @router.get("/chat/usage/")
 async def get_ai_usage(
-    current_user: dict = Depends(get_current_user)
+    current_user: User = Depends(get_current_user)  # 修改为User类型
 ):
     """获取当前AI用量信息"""
     try:
@@ -1021,10 +1022,9 @@ async def get_ai_usage(
             detail=f"获取用量信息失败: {str(e)}"
         )
 
-
 @router.get("/chat/models/")
 async def get_available_models(
-    current_user: dict = Depends(get_current_user)
+    current_user: User = Depends(get_current_user)  # 修改为User类型
 ):
     """获取可用的AI模型列表"""
     try:
@@ -1050,7 +1050,7 @@ async def get_available_models(
 @router.post("/branch/")
 async def create_branch(
     request: schemas.CreateBranchRequest,
-    current_user: dict = Depends(get_current_user),  # 添加认证
+    current_user: User = Depends(get_current_user),  # 修改为User类型
     db: Session = Depends(get_db)
 ):
     """创建新的对话分支（仅限最新消息 + 深度限制）"""
@@ -1063,7 +1063,7 @@ async def create_branch(
         if not conversation:
             raise HTTPException(status_code=404, detail="对话不存在")
         
-        if conversation.user_id != current_user["id"]:
+        if conversation.user_id != current_user.id:  # 修改为属性访问
             raise HTTPException(status_code=403, detail="无权在此对话中创建分支")
         
         # 2. 验证父消息存在
@@ -1204,7 +1204,7 @@ async def create_branch(
 @router.get("/messages/{message_id}/editable")
 def check_message_editable(
     message_id: int,
-    current_user: dict = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),  # 修改为User类型
     db: Session = Depends(get_db)
 ):
     """
@@ -1245,7 +1245,7 @@ def check_message_editable(
                 detail="对话不存在"
             )
         
-        if conversation.user_id != current_user["id"]:
+        if conversation.user_id != current_user.id:  # 修改为属性访问
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="无权编辑此消息"
@@ -1342,7 +1342,7 @@ def check_message_editable(
 async def update_user_message_stream(
     message_id: int,
     request: schemas.UpdateUserMessageRequest,
-    current_user: dict = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),  # 修改为User类型
     db: Session = Depends(get_db)
 ):
     """
@@ -1392,7 +1392,7 @@ async def update_user_message_stream(
                 yield f"data: {error_data}\n\n"
                 return
             
-            if conversation.user_id != current_user["id"]:
+            if conversation.user_id != current_user.id:  # 修改为属性访问
                 error_data = json.dumps({
                     "content": "无权编辑此消息",
                     "error": True,
@@ -1402,7 +1402,7 @@ async def update_user_message_stream(
                 return
             
             # 3. 验证消息可编辑性（复用检查逻辑）
-            response = check_message_editable(message_id, current_user, db)
+            response = check_message_editable(message_id, current_user, db)  # 注意：这里current_user已经是User对象
             response_data = response["data"]
             
             if not response_data["is_editable"]:
@@ -1459,7 +1459,7 @@ async def update_user_message_stream(
             stream_generator = ai_service.stream_chat_completion(
                 messages=ai_messages,
                 model=model,
-                user_id=current_user["username"]
+                user_id=current_user.username  # 修改为属性访问
             )
             
             try:

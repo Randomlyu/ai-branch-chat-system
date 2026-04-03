@@ -225,4 +225,57 @@ class UpdateUserMessageData(BaseModel):
     new_ai_message: Message
     conversation_id: int
     thread_id: int
+
+# ===== 认证相关模型 =====
+class TokenBase(BaseModel):
+    """令牌基础模型"""
+    access_token: str
+    token_type: str = "bearer"
+
+class LoginRequest(BaseModel):
+    """登录请求模型"""
+    username: str
+    password: str
+
+class LoginResponse(TokenBase):
+    """登录响应模型"""
+    refresh_token: str
+    user_id: int
+    username: str
+    need_password_change: bool
+
+class RefreshTokenRequest(BaseModel):
+    """刷新令牌请求模型"""
+    refresh_token: str
+
+class RefreshTokenResponse(TokenBase):
+    """刷新令牌响应模型"""
+    pass
+
+class ChangePasswordRequest(BaseModel):
+    """修改密码请求模型"""
+    current_password: str
+    new_password: str
+
+class ChangePasswordResponse(BaseModel):
+    """修改密码响应模型"""
+    code: int
+    message: str
+    data: Optional[Dict[str, Any]] = None
+
+class UserInfo(BaseModel):
+    """用户信息模型"""
+    id: int
+    username: str
+    email: Optional[str] = None
+    need_password_change: bool
+    created_at: datetime
+    
+    @field_serializer('created_at')
+    def serialize_created_at(self, created_at: datetime, _info) -> str:
+        """将created_at字段序列化为北京时间字符串"""
+        beijing_time = to_beijing_time(created_at)
+        return beijing_time.isoformat()
+    
+    model_config = ConfigDict(from_attributes=True)
 # ===================================
