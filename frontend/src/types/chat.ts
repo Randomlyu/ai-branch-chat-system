@@ -114,25 +114,6 @@ export interface StreamResponseData {
   model_used?: string
 }
 
-// AI用量信息
-export interface AIUsageInfo {
-  current_date: string
-  total_tokens: number
-  max_daily_tokens: number
-  remaining_tokens: number
-  available_models: string[]
-  default_model: string
-  streaming_enabled: boolean
-  next_reset?: string
-  next_reset_timestamp?: number
-}
-
-// 模型列表响应
-export interface ModelsResponse {
-  models: string[]
-  default_model: string
-}
-
 // 流式请求配置
 export interface StreamRequestConfig {
   onMessage: (data: StreamResponseData) => void
@@ -156,6 +137,34 @@ export interface RegenerateMessageResponse {
   }
 }
 
+// ========== AI模型相关类型 ==========
+// AI用量信息
+export interface AIUsageInfo {
+  current_date: string
+  total_tokens: number
+  max_daily_tokens: number
+  remaining_tokens: number
+  available_models: AIModelInfo[]
+  default_model: string
+  streaming_enabled: boolean
+  next_reset?: string
+  next_reset_timestamp?: number
+}
+
+// 模型信息
+export interface AIModelInfo {
+  id: string
+  name: string
+  provider?: string
+  is_default?: boolean
+}
+
+// 模型列表响应
+export interface ModelsResponse {
+  models: AIModelInfo[]
+  default_model: string
+}
+
 // ===== 删除线程相关的类型 =====
 export type DeleteThreadRequest = Record<string, never>  // 表示空对象，而不是空接口
 
@@ -172,7 +181,7 @@ export interface DeleteThreadResponse {
 }
 // ===================================
 
-// ===== 新增：消息编辑相关类型 =====
+// ===== 消息编辑相关类型 =====
 export interface CheckMessageEditableRequest {
   message_id: number
 }

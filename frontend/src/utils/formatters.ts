@@ -156,19 +156,3 @@ export const formatNumber = (num: number): string => {
   }
   return num.toString()
 }
-
-/**
- * 获取模型显示名称
- * @param model 模型标识符
- * @returns 用户友好的显示名称
- */
-export const getModelDisplayName = (model: string): string => {
-  const modelNames: Record<string, string> = {
-    'deepseek-ai/DeepSeek-V3': 'DeepSeek V3',
-    'gpt-3.5-turbo': 'GPT-3.5 Turbo',
-    'gpt-4': 'GPT-4',
-    'mock': '模拟模式',
-    '模拟模式': '模拟模式'
-  }
-  return modelNames[model] || model
-}

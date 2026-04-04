@@ -15,7 +15,9 @@ import type {
   CheckMessageEditableRequest,
   CheckMessageEditableResponse,
   UpdateUserMessageRequest,
-  UpdateUserMessageResponse
+  UpdateUserMessageResponse,
+  AIModelInfo, 
+  ModelsResponse
 } from '@/types/chat'
 
 // 导入认证存储
@@ -426,7 +428,7 @@ export const regenerateMessageStream = async (
   await sendStreamRequest(`/threads/${threadId}/messages/${messageId}/regenerate`, data, config)
 }
 
-// ===== 新增：消息编辑相关API =====
+// ===== 消息编辑相关API =====
 /**
  * 检查消息是否可编辑
  */
@@ -466,7 +468,7 @@ export const getAIUsage = async (): Promise<ApiResponse<AIUsageInfo>> => {
 /**
  * 获取可用模型列表
  */
-export const getAvailableModels = async (): Promise<ApiResponse<{ models: string[], default_model: string }>> => {
+export const getAvailableModels = async (): Promise<ApiResponse<ModelsResponse>> => {
   return apiClient.get('/chat/models/')
 }
 

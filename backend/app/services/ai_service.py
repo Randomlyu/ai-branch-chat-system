@@ -233,65 +233,103 @@ class AIService:
     
     def _setup_providers(self):
         """配置可用的AI模型提供商"""
-        # 硅基流动平台DeepSeek-V3配置
+        # 从环境变量读取配置
         deepseek_api_key = os.getenv("DEEPSEEK_API_KEY")
         base_url = os.getenv("OPENAI_API_BASE", "https://api.siliconflow.cn/v1")
-        model_name = os.getenv("DEFAULT_MODEL", "deepseek-ai/DeepSeek-V3")
         
-        if deepseek_api_key:
+        # 读取支持的模型列表
+        supported_models_str = os.getenv("SUPPORTED_MODELS", "mock")
+        supported_models = [model.strip() for model in supported_models_str.split(",") if model.strip()]
+        
+        # 读取模型友好名称映射
+        display_names_str = os.getenv("MODEL_DISPLAY_NAMES", "{}")
+        try:
+            model_display_names = json.loads(display_names_str)
+        except json.JSONDecodeError:
+            model_display_names = {}
+            logger.warning(f"MODEL_DISPLAY_NAMES配置解析失败: {display_names_str}")
+        
+        # 读取默认模型
+        default_model = os.getenv("DEFAULT_MODEL", "mock")
+        
+        # 创建异步客户端（如果配置了API密钥）
+        async_client = None
+        if deepseek_api_key and deepseek_api_key != "your-api-key-here":
             try:
-                # 异步客户端（用于流式调用）
                 async_client = AsyncOpenAI(
                     api_key=deepseek_api_key,
                     base_url=base_url
                 )
-                
-                self.model_providers[model_name] = {
-                    "sync_client": None,  # 不再需要同步客户端
-                    "async_client": async_client,
-                    "model": model_name,
-                    "is_real": True
-                }
-                logger.info(f"已配置硅基流动平台模型: {model_name}")
+                logger.info(f"已创建硅基流动平台客户端，基础URL: {base_url}")
             except Exception as e:
                 logger.error(f"初始化硅基流动客户端失败: {e}")
+                async_client = None
         
-        # 如果没有配置任何API密钥，使用模拟模式
-        if not self.model_providers:
-            logger.warning("没有配置任何AI API密钥，将使用模拟模式")
-            self.model_providers["mock"] = {
-                "sync_client": None, 
-                "async_client": None, 
-                "model": "mock",
-                "is_real": False
+        # 注册所有支持的模型
+        for model_id in supported_models:
+            # 跳过已注册的模型
+            if model_id in self.model_providers:
+                continue
+            
+            # 检查是否是模拟模式
+            is_mock = model_id == "mock"
+            is_real = not is_mock and async_client is not None
+            
+            # 获取友好名称
+            display_name = model_display_names.get(model_id, model_id)
+            
+            # 注册模型
+            self.model_providers[model_id] = {
+                "async_client": async_client if is_real else None,
+                "model": model_id,
+                "is_real": is_real,
+                "display_name": display_name,
+                "is_default": (model_id == default_model)
             }
+            
+            logger.info(f"已注册模型: {model_id} (显示名: {display_name}, 真实API: {is_real}, 默认: {model_id == default_model})")
         
-        # 始终添加模拟模式，无论是否有真实API密钥
-        if "mock" not in self.model_providers:
+        # 如果没有注册任何模型，确保有模拟模式
+        if not self.model_providers:
+            logger.warning("没有配置任何AI模型，将使用模拟模式")
             self.model_providers["mock"] = {
-                "sync_client": None,
                 "async_client": None,
                 "model": "mock",
-                "is_real": False
+                "is_real": False,
+                "display_name": "模拟模式",
+                "is_default": True
             }
-            logger.info(f"已添加模拟模式提供者，当前可用模型: {list(self.model_providers.keys())}")
-    
-    def get_available_models(self) -> list:
-        """获取可用的模型列表"""
-        return list(self.model_providers.keys())
+        
+        logger.info(f"模型注册完成，共注册 {len(self.model_providers)} 个模型")
+
+    def get_available_models(self) -> List[Dict[str, Any]]:
+        """获取可用的模型列表，包含详细信息"""
+        models_list = []
+        for model_id, provider in self.model_providers.items():
+            model_info = {
+                "id": model_id,
+                "name": provider.get("display_name", model_id),
+                "provider": "siliconflow" if provider.get("is_real") else "mock",
+                "is_default": provider.get("is_default", False)
+            }
+            models_list.append(model_info)
+        
+        # 按是否默认排序，默认模型排第一
+        models_list.sort(key=lambda x: (not x["is_default"], x["name"]))
+        return models_list
     
     def get_default_model(self) -> str:
-        """获取默认模型"""
-        models = self.get_available_models()
-        if not models:
-            return "mock"
+        """获取默认模型ID"""
+        # 查找标记为默认的模型
+        for model_id, provider in self.model_providers.items():
+            if provider.get("is_default", False):
+                return model_id
         
-        # 优先返回真实模型
-        for model in models:
-            if model != "mock":
-                return model
+        # 如果没有找到默认模型，返回第一个
+        if self.model_providers:
+            return list(self.model_providers.keys())[0]
         
-        return models[0]
+        return "mock"
     
     async def stream_chat_completion(
         self,
@@ -317,10 +355,19 @@ class AIService:
         if model is None:
             model = self.get_default_model()
         
-        # 映射前端发送的"模拟模式"到后端的"mock"
-        if model == "模拟模式":
-            model = "mock"
-            logger.info(f"检测到前端模拟模式请求，映射为: {model}")
+       # 处理前端可能发送的友好名称
+        if model and model not in self.model_providers:
+            # 检查是否发送的是友好名称
+            for model_id, provider in self.model_providers.items():
+                if provider.get("display_name") == model:
+                    model = model_id
+                    logger.info(f"前端发送友好名称'{model}'，映射为模型ID: {model_id}")
+                    break
+            
+            # 特殊处理"模拟模式"
+            if model == "模拟模式":
+                model = "mock"
+                logger.info(f"前端发送'模拟模式'，映射为模型ID: mock")
         
         # 检查模型是否可用
         if model not in self.model_providers:

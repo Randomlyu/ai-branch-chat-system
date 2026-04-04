@@ -74,20 +74,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, nextTick } from 'vue'
 import BranchDepthHint from '@/components/BranchDepthHint.vue'
-import type { Thread } from '@/types/chat'
-
-// 定义AI用量的接口
-interface AIUsage {
-  current_date: string
-  total_tokens: number
-  max_daily_tokens: number
-  remaining_tokens: number
-  // 添加其他已知的可能属性
-  last_reset?: string
-  available_models?: string[]
-  default_model?: string
-  streaming_enabled?: boolean
-}
+import type { Thread, AIUsageInfo } from '@/types/chat'
 
 // 定义Props
 const props = defineProps<{
@@ -103,16 +90,15 @@ const props = defineProps<{
   currentThread?: Thread | null
   currentConversation?: { id?: number } | null
   // 用量信息 - 接受 null
-  aiUsage?: AIUsage | null
+  aiUsage?: AIUsageInfo | null
   // 计算属性
   canSend: boolean
   inputPlaceholder: string
   sendButtonTitle: string
   formattedModelName: string
   remainingTokens: string
-  // ===== 新增：编辑模式相关 =====
+  // 编辑模式相关
   isEditMode: boolean
-  // ============================
 }>()
 
 // 定义事件

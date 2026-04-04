@@ -31,8 +31,7 @@ import { ref, nextTick } from 'vue'
 import MessageItem from './MessageItem.vue'
 import { 
   formatDateTime, 
-  formatMessage, 
-  getModelDisplayName 
+  formatMessage
 } from '@/utils/formatters'
 import type { Message } from '@/types/chat'
 
@@ -41,6 +40,7 @@ const props = defineProps<{
   messages: Message[]
   isStreaming: boolean
   isMessageBranchingPoint?: (messageId: number) => boolean
+  availableModels?: Array<{id: string, name: string}>
 }>()
 
 // 定义 Events
@@ -54,6 +54,27 @@ const emit = defineEmits<{
 
 // 模板引用
 const messagesContainerRef = ref<HTMLElement>()
+
+// 获取模型友好名称
+const getModelDisplayName = (modelId: string): string => {
+  if (!modelId) return ''
+  
+  // 如果有availableModels，从中查找
+  if (props.availableModels && props.availableModels.length > 0) {
+    const model = props.availableModels.find(m => m.id === modelId)
+    if (model) {
+      return model.name || model.id
+    }
+  }
+  
+  // 特殊处理模拟模式
+  if (modelId === 'mock' || modelId === '模拟模式') {
+    return '模拟模式'
+  }
+  
+  // 默认返回ID
+  return modelId
+}
 
 // 消息操作验证方法
 const canRegenerateMessage = (msg: Message): boolean => {
@@ -143,7 +164,7 @@ const getDeleteButtonTitle = (msg: Message) => {
   return '删除此AI回复及其对应的用户提问'
 }
 
-// ===== 新增：用户消息编辑相关方法 =====
+// ===== 用户消息编辑相关方法 =====
 const canEditMessage = (msg: Message): boolean => {
   if (props.isStreaming) return false
   if (msg.role !== 'user') return false
@@ -236,7 +257,7 @@ const handleDeleteMessage = (messageId: number) => {
   emit('delete', messageId)
 }
 
-// ===== 新增：编辑消息事件处理 =====
+// ===== 编辑消息事件处理 =====
 const handleEditMessage = (messageId: number) => {
   emit('edit', messageId)
 }

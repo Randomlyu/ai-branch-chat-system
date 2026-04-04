@@ -131,6 +131,7 @@
         :is-loading="isLoading"
         :streaming-model="streamingModel"
         :is-message-branching-point="isMessageBranchingPoint"
+        :available-models="availableModels"
         @copy="copyMessage"
         @regenerate="regenerateMessage"
         @branch="createBranchFromMessage"
@@ -153,7 +154,7 @@
         :can-send="canSendMessage"
         :input-placeholder="getInputPlaceholder()"
         :send-button-title="getSendButtonTitle()"
-        :formatted-model-name="getModelDisplayName(currentModel)"
+        :formatted-model-name="currentModelDisplayName"
         :remaining-tokens="aiUsage ? formatNumber(aiUsage.remaining_tokens) : ''"
         :is-edit-mode="isEditMode"
         @send="sendMessage"
@@ -197,8 +198,7 @@ import MessageInput from '@/components/MessageInput.vue'
 
 // 导入工具函数
 import { 
-  formatNumber, 
-  getModelDisplayName 
+  formatNumber
 } from '@/utils/formatters'
 
 // 导入组合式函数
@@ -271,9 +271,15 @@ const canSendMessage = computed(() => {
 })
 
 const isMockModeAvailable = computed(() => {
-  return availableModels.value.includes('模拟模式')
+  return availableModels.value.some(model => 
+    model.id === 'mock' || model.id === '模拟模式' || model.name === '模拟模式'
+  )
 })
 
+// 当前模型的友好名称
+const currentModelDisplayName = computed(() => {
+  return getModelDisplayName(currentModel.value)
+})
 // ---------- 事件处理方法 ----------
 /**
  * 处理修改密码请求
@@ -536,7 +542,31 @@ const stopGenerating = async () => {
  */
 const onModelChange = (newModel: string) => {
   chatStore.setCurrentModel(newModel)
-  showToast(`已切换到模型: ${getModelDisplayName(newModel)}`, 'success')
+  // 从可用模型中查找模型名称
+  const modelInfo = availableModels.value.find(model => model.id === newModel)
+  const modelName = modelInfo ? modelInfo.name : newModel
+  showToast(`已切换到模型: ${modelName}`, 'success')
+}
+
+/**
+ * 获取模型友好名称
+ */
+const getModelDisplayName = (modelId: string): string => {
+  if (!modelId) return '未知模型'
+  
+  // 在可用模型中查找
+  const model = availableModels.value.find(m => m.id === modelId)
+  if (model) {
+    return model.name || model.id
+  }
+  
+  // 特殊处理模拟模式
+  if (modelId === 'mock' || modelId === '模拟模式') {
+    return '模拟模式'
+  }
+  
+  // 默认返回ID
+  return modelId
 }
 
 // ---------- 分支相关方法 ----------

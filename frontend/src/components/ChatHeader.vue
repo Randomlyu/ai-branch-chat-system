@@ -53,11 +53,11 @@
           :disabled="isStreaming"
         >
           <option 
-            v-for="model in availableModels" 
-            :key="model" 
-            :value="model"
+          v-for="model in availableModels" 
+          :key="model.id" 
+          :value="model.id"
           >
-            {{ getModelDisplayName(model) }}
+            {{ model.name || model.id }}
           </option>
         </select>
       </div>
@@ -67,8 +67,7 @@
 
 <script setup lang="ts">
 import { ref, watch, computed } from 'vue'
-import { getModelDisplayName } from '@/utils/formatters'
-import type { Conversation, Thread } from '@/types/chat'
+import type { Conversation, Thread, AIModelInfo } from '@/types/chat'
 
 // 定义 ThreadPath 类型
 interface ThreadPath {
@@ -81,7 +80,7 @@ const props = defineProps<{
   currentConversation: Conversation | null
   currentThread: Thread | null
   threadPath: ThreadPath[]
-  availableModels: string[]
+  availableModels: AIModelInfo[]
   currentModel: string
   isMockModeAvailable: boolean
   isStreaming: boolean

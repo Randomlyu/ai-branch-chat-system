@@ -12,10 +12,10 @@ import type {
   AIUsageInfo,
   DeleteMessageResponse,
   ThreadDeleteInfo,
-  // ===== 新增导入 =====
+  AIModelInfo,        // 新增
+  ModelsResponse,  
   CheckMessageEditableResponse,
   UpdateUserMessageResponse
-  // ===================
 } from '@/types/chat'
 import * as chatApi from '@/api/chat'
 
@@ -34,10 +34,10 @@ export const useChatStore = defineStore('chat', () => {
   const streamingController = ref<AbortController | null>(null)
   const streamingModel = ref<string>('')
   const aiUsage = ref<AIUsageInfo | null>(null)
-  const availableModels = ref<string[]>([])
+  const availableModels = ref<AIModelInfo[]>([])
   const currentModel = ref<string>('')
 
-  // ===== 新增：消息编辑相关状态 =====
+  // ===== 消息编辑相关状态 =====
   const editingMessage = ref<Message | null>(null)  // 当前正在编辑的消息
   const isEditMode = ref(false)  // 是否处于编辑模式
   const cancelEditMode = ref<() => void>(() => {})  // 取消编辑的函数
@@ -76,8 +76,20 @@ export const useChatStore = defineStore('chat', () => {
     if (messages.value.length === 0) return null
     return messages.value[messages.value.length - 1]
   })
-
-  // ===== 新增：消息编辑相关计算属性 =====
+  
+  // 获取当前模型的完整信息
+  const currentModelInfo = computed(() => {
+    if (!currentModel.value) return null
+    return availableModels.value.find(model => model.id === currentModel.value)
+  })
+  
+  // 获取当前模型的友好名称
+  const currentModelDisplayName = computed(() => {
+    if (!currentModelInfo.value) return '未知模型'
+    return currentModelInfo.value.name || currentModelInfo.value.id
+  })
+  
+  // ===== 消息编辑相关计算属性 =====
   // 获取最新的用户消息
   const latestUserMessage = computed(() => {
     if (messages.value.length === 0) return null
@@ -774,7 +786,7 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
-  // ===== 新增：消息编辑相关方法 =====
+  // ===== 消息编辑相关方法 =====
   /**
    * 开始编辑消息
    */
@@ -1369,22 +1381,50 @@ export const useChatStore = defineStore('chat', () => {
   const fetchAvailableModels = async (): Promise<void> => {
     try {
       const response = await chatApi.getAvailableModels()
-      // 使用类型断言
-      const modelsData = response.data as { models: string[], default_model: string }
+      const modelsData = response.data
       
       // 确保包含模拟模式
       const allModels = [...modelsData.models]
-      if (!allModels.includes('mock') && !allModels.includes('模拟模式')) {
-        allModels.push('模拟模式')
+      
+      // 检查是否已包含模拟模式
+      const hasMockModel = allModels.some(model => model.id === 'mock' || model.id === '模拟模式')
+      if (!hasMockModel) {
+        allModels.push({
+          id: 'mock',
+          name: '模拟模式',
+          provider: 'mock',
+          is_default: false
+        })
       }
       
       availableModels.value = allModels
-      currentModel.value = modelsData.default_model ?? (allModels.length > 0 ? allModels[0] : '模拟模式')
+      
+      // 设置当前模型
+      if (modelsData.default_model && allModels.some(m => m.id === modelsData.default_model)) {
+        currentModel.value = modelsData.default_model
+      } else if (allModels.length > 0) {
+        // 查找默认模型
+        const defaultModel = allModels.find(m => m.is_default)
+        currentModel.value = defaultModel?.id || allModels[0]!.id
+      } else {
+        currentModel.value = 'mock'
+      }
+      
+      console.log('已加载模型列表:', {
+        count: allModels.length,
+        models: allModels,
+        currentModel: currentModel.value
+      })
     } catch (err: unknown) {
       console.error('获取模型列表失败:', err)
-      // 设置默认值，确保包含模拟模式
-      availableModels.value = ['模拟模式']
-      currentModel.value = '模拟模式'
+      // 设置默认值
+      availableModels.value = [{
+        id: 'mock',
+        name: '模拟模式',
+        provider: 'mock',
+        is_default: true
+      }]
+      currentModel.value = 'mock'
     }
   }
 
@@ -1393,6 +1433,27 @@ export const useChatStore = defineStore('chat', () => {
    */
   const setCurrentModel = (model: string): void => {
     currentModel.value = model
+  }
+
+  /**
+   * 根据模型ID获取友好名称
+   */
+  const getModelDisplayName = (modelId: string): string => {
+    if (!modelId) return '未知模型'
+    
+    // 在可用模型中查找
+    const model = availableModels.value.find(m => m.id === modelId)
+    if (model) {
+      return model.name || model.id
+    }
+    
+    // 特殊处理模拟模式
+    if (modelId === 'mock' || modelId === '模拟模式') {
+      return '模拟模式'
+    }
+    
+    // 默认返回ID
+    return modelId
   }
 
   /**
@@ -1471,22 +1532,6 @@ export const useChatStore = defineStore('chat', () => {
       console.error('验证消息存在失败:', err)
       return false
     }
-  }
-
-  /**
-   * 获取模型显示名称
-   */
-  const getModelDisplayName = (model: string): string => {
-    const modelDisplayNames: Record<string, string> = {
-      'mock': '模拟模式',
-      '模拟模式': '模拟模式',
-      'deepseek-chat': 'DeepSeek Chat',
-      'deepseek-ai/DeepSeek-V3': 'DeepSeek V3',
-      'gpt-4': 'GPT-4',
-      'gpt-3.5-turbo': 'GPT-3.5 Turbo'
-    }
-    
-    return modelDisplayNames[model] || model
   }
 
   /**

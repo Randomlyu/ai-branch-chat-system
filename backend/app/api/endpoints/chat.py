@@ -1026,15 +1026,18 @@ async def get_ai_usage(
 async def get_available_models(
     current_user: User = Depends(get_current_user)  # 修改为User类型
 ):
-    """获取可用的AI模型列表"""
+    """获取可用的AI模型列表，包含详细信息"""
     try:
+        # 获取模型列表
         models_list = ai_service.get_available_models()
+        default_model = ai_service.get_default_model()
+        
         return {
             "code": 200,
             "message": "成功获取模型列表",
             "data": {
                 "models": models_list,
-                "default_model": ai_service.get_default_model()
+                "default_model": default_model
             }
         }
     except Exception as e:
