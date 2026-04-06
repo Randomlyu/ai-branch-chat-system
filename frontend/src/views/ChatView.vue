@@ -224,11 +224,15 @@ const {
   availableModels,
   currentModel,
   isTokenLimitReached,
-  // ===== 新增：消息编辑相关状态 =====
   isEditMode,
   editingMessage
-  // ================================
 } = storeToRefs(chatStore)
+
+import { 
+  loadSidebarState, 
+  saveSidebarState, 
+  initStatePersistence 
+} from '@/utils/state-persistence'
 
 // ---------- 本地响应式数据 ----------
 const userInput = ref('')
@@ -237,7 +241,7 @@ const conversationSidebarRef = ref<InstanceType<typeof ConversationSidebar>>()
 const chatMessagesRef = ref<InstanceType<typeof ChatMessages>>()
 const isRightSidebarCollapsed = ref(false)
 const isLeftSidebarCollapsed = ref(false)
-const showChangePassword = ref(false)  // 新增：控制修改密码模态框显示
+const showChangePassword = ref(false) 
 
 // ---------- 删除对话相关状态 ----------
 const showDeleteConfirm = ref(false)
@@ -329,6 +333,8 @@ const handlePasswordChangeSuccess = () => {
  */
 const toggleRightSidebar = () => {
   isRightSidebarCollapsed.value = !isRightSidebarCollapsed.value
+  // 保存侧边栏状态
+  saveSidebarState(isLeftSidebarCollapsed.value, isRightSidebarCollapsed.value)
 }
 
 /**
@@ -336,6 +342,8 @@ const toggleRightSidebar = () => {
  */
 const toggleLeftSidebar = () => {
   isLeftSidebarCollapsed.value = !isLeftSidebarCollapsed.value
+   // 保存侧边栏状态
+  saveSidebarState(isLeftSidebarCollapsed.value, isRightSidebarCollapsed.value)
 }
 
 // ---------- 对话列表方法 ----------
@@ -500,7 +508,7 @@ const sendMessage = async () => {
   const text = userInput.value.trim()
   if (!text || isLoading.value || isTokenLimitReached.value) return
 
-  try {
+  try {  
     // 调用store的发送消息方法（在编辑模式下会自动调用更新方法）
     await chatStore.sendMessageStream(text)
     
@@ -925,7 +933,7 @@ const cancelDeleteMessage = () => {
   deletingMessageId.value = null
 }
 
-// ===== 新增：消息编辑相关方法 =====
+// ===== 消息编辑相关方法 =====
 /**
  * 编辑消息
  */
@@ -992,7 +1000,7 @@ const cancelEditing = () => {
   userInput.value = ''
   showToast('已取消编辑')
 }
-// ===================================
+
 
 // ---------- 工具函数 ----------
 /**
@@ -1007,19 +1015,59 @@ onMounted(async () => {
   console.log('ChatView 组件挂载')
   
   try {
+    // 初始化状态持久化（清理过期状态）
+    initStatePersistence()
+    
+    // 1. 尝试恢复侧边栏状态
+    const sidebarState = loadSidebarState()
+    if (sidebarState) {
+      isLeftSidebarCollapsed.value = sidebarState.conversationSidebarCollapsed
+      isRightSidebarCollapsed.value = sidebarState.threadTreeSidebarCollapsed
+    }
+    
+    // 2. 初始化 store
     await chatStore.initialize()
+    
+    // 3. 获取对话列表
     await chatStore.fetchConversations()
     
-    if (chatStore.conversations.length === 0) {
-      console.log('没有对话，创建默认对话')
-      await chatStore.createConversation('欢迎对话')
-    } else if (!chatStore.currentConversation) {
-      console.log('有对话但没有当前对话，切换到第一个')
-      await chatStore.switchConversation(chatStore.conversations[0]!.id)
+    // 4. 尝试恢复之前的对话/线程状态
+    const savedState = await chatStore.restoreChatState()
+    
+    if (savedState?.conversationId) {
+      // 检查保存的对话是否还存在
+      const conversationExists = chatStore.conversations.some(
+        conv => conv.id === savedState.conversationId
+      )
+      
+      if (conversationExists) {
+        console.log('恢复之前的对话状态:', savedState)
+        await chatStore.switchConversation(savedState.conversationId)
+        
+        // 如果保存了线程ID，切换到该线程
+        if (savedState.threadId && currentConversation.value?.id === savedState.conversationId) {
+          // 等待对话切换完成后再切换线程
+          setTimeout(async () => {
+            try {
+              await chatStore.switchThread(savedState.threadId!)
+            } catch (error) {
+              console.warn('恢复线程失败，使用默认线程:', error)
+            }
+          }, 100)
+        }
+      } else {
+        // 保存的对话不存在，使用默认逻辑
+        await fallbackToDefaultConversation()
+      }
+    } else {
+      // 没有保存的状态，使用默认逻辑
+      await fallbackToDefaultConversation()
     }
-    console.log('初始化完成，当前对话:', chatStore.currentConversation?.id)
+    
   } catch (error) {
     console.error('初始化失败:', error)
+    // 如果恢复状态失败，使用默认逻辑
+    await fallbackToDefaultConversation()
   }
   
   nextTick(() => {
@@ -1028,6 +1076,17 @@ onMounted(async () => {
   
   document.addEventListener('click', handleClickOutside)
 })
+
+// 添加默认回退逻辑
+const fallbackToDefaultConversation = async () => {
+  if (chatStore.conversations.length === 0) {
+    console.log('没有对话，创建默认对话')
+    await chatStore.createConversation('欢迎对话')
+  } else if (!chatStore.currentConversation) {
+    console.log('有对话但没有当前对话，切换到第一个')
+    await chatStore.switchConversation(chatStore.conversations[0]!.id)
+  }
+}
 
 onBeforeUnmount(() => {
   document.removeEventListener('click', handleClickOutside)
@@ -1042,14 +1101,14 @@ watch(messages, () => {
 
 // 监听编辑状态变化
 watch(isEditMode, (newVal) => {
+  // 简化逻辑，只处理输入框内容
   if (newVal && editingMessage.value) {
-    // 进入编辑模式，将消息内容设置到输入框
     userInput.value = editingMessage.value.content
   } else {
-    // 退出编辑模式，清空输入框
     userInput.value = ''
   }
 })
+
 </script>
 
 <style scoped>

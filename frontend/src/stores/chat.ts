@@ -12,11 +12,17 @@ import type {
   AIUsageInfo,
   DeleteMessageResponse,
   ThreadDeleteInfo,
-  AIModelInfo,        // 新增
+  AIModelInfo, 
   ModelsResponse,  
   CheckMessageEditableResponse,
   UpdateUserMessageResponse
 } from '@/types/chat'
+
+import { 
+  saveChatState, 
+  loadChatState, 
+} from '@/utils/state-persistence'
+
 import * as chatApi from '@/api/chat'
 
 export const useChatStore = defineStore('chat', () => {
@@ -137,7 +143,6 @@ export const useChatStore = defineStore('chat', () => {
     
     return true
   })
-  // ================================
 
   // ========== 基础动作 ==========
   /**
@@ -206,6 +211,15 @@ export const useChatStore = defineStore('chat', () => {
       
       // 获取分支树
       await fetchThreadTree()
+
+       // 在切换成功后保存状态
+      if (currentThread.value) {
+        saveChatState(conversationId, currentThread.value.id)
+      } else {
+        // 如果没有线程，只保存对话ID
+        saveChatState(conversationId, 0)
+      }
+
       error.value = null
     } catch (err: unknown) {
       console.error('切换对话失败:', err)
@@ -824,7 +838,7 @@ export const useChatStore = defineStore('chat', () => {
       editingMessage.value = { ...message }
       isEditMode.value = true
       inputPlaceholder.value = '正在编辑消息...'
-      
+
       // 更新消息的编辑状态
       const messageIndex = messages.value.findIndex(msg => msg.id === message.id)
       if (messageIndex !== -1) {
@@ -1098,7 +1112,7 @@ export const useChatStore = defineStore('chat', () => {
   /**
    * 取消编辑
    */
-  const cancelEditing = (): void => {
+  const cancelEditing = (): void => { 
     // 清除消息的编辑状态
     if (editingMessage.value) {
       const messageIndex = messages.value.findIndex(msg => msg.id === editingMessage.value!.id)
@@ -1108,8 +1122,8 @@ export const useChatStore = defineStore('chat', () => {
           msg.is_editing = false
           messages.value = [...messages.value] // 触发响应式更新
         }
-     }
-}
+      }
+    }
     
     // 重置编辑状态
     editingMessage.value = null
@@ -1123,7 +1137,6 @@ export const useChatStore = defineStore('chat', () => {
   const getEditingMessageContent = (): string => {
     return editingMessage.value?.content || ''
   }
-  // ================================
 
   // ========== 分支相关 ==========
   /**
@@ -1216,6 +1229,10 @@ export const useChatStore = defineStore('chat', () => {
       // 获取线程消息
       await fetchMessages()
       
+      // 在切换成功后保存状态
+      if (currentConversation.value?.id) {
+        saveChatState(currentConversation.value.id, threadId)
+      }
       error.value = null
     } catch (err: unknown) {
       console.error('切换线程失败:', err)
@@ -1795,6 +1812,24 @@ export const useChatStore = defineStore('chat', () => {
         return { can: false, reason: '未知操作' }
     }
   }
+  
+  /**
+   * 恢复聊天状态
+   */
+  const restoreChatState = async (): Promise<{ 
+    conversationId?: number; 
+    threadId?: number 
+  } | null> => {
+    const savedState = loadChatState()
+    if (!savedState || !savedState.conversationId) {
+      return null
+    }
+    
+    return {
+      conversationId: savedState.conversationId,
+      threadId: savedState.threadId
+    }
+  }
 
   /**
    * 清除错误
@@ -1829,7 +1864,7 @@ export const useChatStore = defineStore('chat', () => {
     availableModels,
     currentModel,
     
-    // ===== 新增：消息编辑相关状态 =====
+    // 消息编辑相关状态 
     editingMessage,
     isEditMode,
     cancelEditMode,
@@ -1840,12 +1875,12 @@ export const useChatStore = defineStore('chat', () => {
     threadPath,
     isTokenLimitReached,
     latestMessage,
-    // ===== 新增：消息编辑相关计算属性 =====
+    // 消息编辑相关计算属性
     latestUserMessage,
     isEditing,
     editableMessage,
     canEditMessage,
-    // ================================
+
 
     // 基础动作
     fetchConversations,
@@ -1862,13 +1897,12 @@ export const useChatStore = defineStore('chat', () => {
     deleteMessage,
     stopStreaming,
     
-    // ===== 新增：消息编辑相关动作 =====
+    // 消息编辑相关动作
     startEditingMessage,
     checkMessageEditable,
     updateUserMessageStream,
     cancelEditing,
     getEditingMessageContent,
-    // ================================
     
     // 分支相关动作
     createBranch,
@@ -1895,6 +1929,7 @@ export const useChatStore = defineStore('chat', () => {
     copyToClipboard,
     validateMessageOperation,
     clearError,
+    restoreChatState,
     initialize
   }
 })

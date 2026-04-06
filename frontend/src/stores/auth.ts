@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import * as api from '@/api/chat'
+import { clearAllUIState } from '@/utils/state-persistence'
 
 export interface User {
   id: number
@@ -194,6 +195,8 @@ export const useAuthStore = defineStore('auth', () => {
    * 用户登出
    */
   const logout = () => {
+  // 清除所有UI状态
+  clearAllUIState()
   // 清除状态
   accessToken.value = ''
   refreshToken.value = ''
