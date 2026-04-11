@@ -15,7 +15,11 @@
         <span class="message-time">{{ formattedTime }}</span>
         <span v-if="msg.model_used" class="message-model">({{ formattedModelName }})</span>
       </div>
-      <div class="message-text" v-html="formattedContent"></div>
+
+      <div 
+          class="message-text" 
+          v-html="formattedContent">
+      </div>
       
       <!-- 流式生成指示器 -->
       <div v-if="isGenerating" class="generating-indicator">
@@ -214,7 +218,6 @@ const isGenerating = computed(() => {
   color: white;
   border: none;
   border-bottom-right-radius: 4px;
-  /* 用户消息气泡可以稍窄一些 */
   max-width: 85%; /* 比助理消息稍窄 */
   margin-left: auto; /* 确保右对齐 */
    min-width: auto;
@@ -223,10 +226,22 @@ const isGenerating = computed(() => {
 /* 助理消息气泡样式 */
 .assistant .message-text {
   border-bottom-left-radius: 4px;
-  /* 助理消息气泡可以稍宽一些 */
   max-width: 90%; /* 比用户消息稍宽 */
   margin-right: auto; /* 确保左对齐 */
   min-width: auto;
+  /* 气泡样式 */
+  background: white;
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+  padding: 12px 16px; /* 恢复内边距 */
+  border-radius: 12px;
+  /* 内容显示 */
+  overflow-wrap: break-word;
+  word-wrap: break-word;
+  white-space: pre-wrap;
+  line-height: inherit;
+  font-family: inherit;
+  color: inherit;
 }
 
 /* 响应式调整：中等屏幕 */

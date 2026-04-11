@@ -14,7 +14,7 @@
         :can-edit="canEditMessage(msg)"
         :edit-title="getEditButtonTitle(msg)"
         :formatted-time="formatDateTime(msg.created_at)"
-        :formatted-content="formatMessage(msg.content)"
+        :formatted-content="getFormattedMessageContent(msg)"
         :formatted-model-name="msg.model_used ? getModelDisplayName(msg.model_used) : ''"
         @copy="handleCopyMessage"
         @regenerate="handleRegenerateMessage"
@@ -27,12 +27,12 @@
 </template>
 
 <script setup lang="ts">
-import { ref, nextTick } from 'vue'
+import { ref, nextTick, onUpdated } from 'vue'
 import MessageItem from './MessageItem.vue'
 import { 
-  formatDateTime, 
-  formatMessage
+  formatDateTime
 } from '@/utils/formatters'
+import { renderMarkdown, initCodeCopyButtons } from '@/utils/markdown-renderer'  // 添加导入
 import type { Message } from '@/types/chat'
 
 // 定义 Props
@@ -240,6 +240,26 @@ const checkIsMessageBranchingPoint = (messageId: number): boolean => {
   return false
 }
 
+// 格式化消息内容
+const getFormattedMessageContent = (msg: Message): string => {
+  if (!msg.content) return ''
+  
+  if (msg.role === 'assistant') {
+    // AI消息：使用Markdown渲染，包裹在markdown-content类中
+    const rendered = renderMarkdown(msg.content)
+    return `<div class="markdown-content">${rendered}</div>`
+  } else {
+    // 用户消息：简单处理，保持纯文本
+    return msg.content
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#039;')
+      .replace(/\n/g, '<br>')
+  }
+}
+
 // 事件处理
 const handleCopyMessage = (content: string) => {
   emit('copy', content)
@@ -272,6 +292,16 @@ const scrollToBottom = () => {
   }
 }
 
+// 初始化复制按钮
+onUpdated(() => {
+  // 等待DOM更新后初始化复制按钮
+  setTimeout(() => {
+    if (messagesContainerRef.value) {
+      initCodeCopyButtons(messagesContainerRef.value)
+    }
+  }, 100)
+})
+
 // 暴露方法给父组件
 defineExpose({
   scrollToBottom
@@ -286,7 +316,7 @@ defineExpose({
   background: #f9f9f9;
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  gap: 12px;
   min-height: 0;
   width: 100%;
 }
