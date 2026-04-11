@@ -391,7 +391,7 @@ watch(() => props.isStreaming, (newVal) => {
 }
 
 .model-info strong {
-  color: #10b981;
+  color: #f89603;
 }
 
 .input-hints {

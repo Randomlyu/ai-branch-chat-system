@@ -1092,12 +1092,6 @@ onBeforeUnmount(() => {
   document.removeEventListener('click', handleClickOutside)
 })
 
-// 当消息列表变化时，自动滚动到底部
-watch(messages, () => {
-  nextTick(() => {
-    scrollToBottom()
-  })
-}, { deep: true })
 
 // 监听编辑状态变化
 watch(isEditMode, (newVal) => {

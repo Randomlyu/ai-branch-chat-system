@@ -89,22 +89,93 @@
 }
 
 /* ========== 列表样式 ========== */
+/* 基础列表样式 */
 .markdown-content ul,
 .markdown-content ol {
   margin: 0.1em 0 0.4em 1.5em;
   padding: 0;
+  line-height: 1.4;
 }
+
+/* 列表项基础样式 */
 .markdown-content li {
   margin: 0.1em 0;
   line-height: 1.4;
   padding-left: 0.3em;
+  position: relative;
 }
+
+/* 列表项内段落 */
 .markdown-content li p {
   margin: 0;
+  display: inline;
 }
+
+/* 有序列表样式 */
+.markdown-content ol {
+  list-style-type: decimal;
+  counter-reset: list-counter;
+}
+
+/* 无序列表样式 */
+.markdown-content ul {
+  list-style-type: disc;
+}
+
+/* 嵌套列表样式 */
+/* 一级嵌套有序列表 */
+.markdown-content ol ol {
+  list-style-type: lower-alpha;
+  margin-left: 1.5em;
+}
+
+/* 二级嵌套有序列表 */
+.markdown-content ol ol ol {
+  list-style-type: lower-roman;
+}
+
+/* 一级嵌套无序列表 */
+.markdown-content ul ul {
+  list-style-type: circle;
+}
+
+/* 二级嵌套无序列表 */
+.markdown-content ul ul ul {
+  list-style-type: square;
+}
+
+/* 混合嵌套：有序列表中的无序列表 */
+.markdown-content ol ul {
+  list-style-type: circle;
+}
+
+/* 混合嵌套：无序列表中的有序列表 */
+.markdown-content ul ol {
+  list-style-type: decimal;
+}
+
+/* 列表间距调整 */
 .markdown-content ul + *,
 .markdown-content ol + * {
   margin-top: 0.4em;
+}
+
+/* 解决列表编号对齐问题 */
+.markdown-content ol > li {
+  padding-left: 0.5em;
+}
+
+.markdown-content ul > li {
+  padding-left: 0.5em;
+}
+
+/* 列表内容换行处理 */
+.markdown-content li > *:first-child {
+  margin-top: 0;
+}
+
+.markdown-content li > *:last-child {
+  margin-bottom: 0;
 }
 
 /* ========== 引用样式 ========== */
@@ -181,6 +252,10 @@
   background-color: #10b981;
   color: white;
 }
+.markdown-code-block .copy-code-btn.error {
+  background-color: #ef4444;
+  color: white;
+}
 /* 代码内容 */
 .markdown-code-block pre {
   margin: 0;
@@ -204,6 +279,19 @@
   font-family: 'SFMono-Regular', Consolas, monospace;
   color: #d97706;
   border: 1px solid rgba(0, 0, 0, 0.08);
+}
+
+/* 代码高亮样式 */
+.markdown-content .hljs-keyword {
+  color: #f472b6; /* 粉色 */
+  font-weight: 500;
+}
+.markdown-content .hljs-string {
+  color: #34d399; /* 绿色 */
+}
+.markdown-content .hljs-comment {
+  color: #9ca3af;
+  font-style: italic;
 }
 
 /* ========== 表格样式 ========== */
@@ -255,7 +343,7 @@
   vertical-align: top;
   line-height: 1.4;
   word-break: break-word;
-  /* 移除 max-width: 250px 避免截断内容 */
+
 }
 .markdown-content td:last-child {
   border-right: none;
@@ -338,4 +426,83 @@
   .markdown-code-block pre {
     padding: 0.6em;
   }
+  
+  /* 移动端列表调整 */
+  .markdown-content ul,
+  .markdown-content ol {
+    margin-left: 1.2em;
+  }
+  
+  .markdown-content ol ol,
+  .markdown-content ul ul {
+    margin-left: 1.2em;
+  }
+}
+
+/* 不完整代码块样式 */
+.incomplete-code-block {
+  background-color: #f3f4f6;
+  border-left: 3px solid #f59e0b;
+  padding: 8px 12px;
+  margin: 8px 0;
+  font-family: 'SFMono-Regular', Consolas, monospace;
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: #92400e;
+}
+
+/* 错误状态样式 */
+.markdown-error {
+  background-color: #fef2f2;
+  border: 1px solid #fecaca;
+  border-radius: 6px;
+  padding: 12px;
+  color: #dc2626;
+  font-family: monospace;
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 8px 0;
+}
+
+/* 改进的列表样式 */
+.markdown-content ol,
+.markdown-content ul {
+  margin: 0.5em 0 0.5em 1.5em;
+  padding: 0;
+}
+
+.markdown-content li {
+  margin: 0.25em 0;
+  line-height: 1.5;
+}
+
+.markdown-content li p {
+  margin: 0;
+  display: inline;
+}
+
+/* 改进的段落间距 */
+.markdown-content p {
+  margin: 0.75em 0;
+  line-height: 1.6;
+}
+
+/* 改进的标题间距 */
+.markdown-content h1,
+.markdown-content h2,
+.markdown-content h3,
+.markdown-content h4,
+.markdown-content h5,
+.markdown-content h6 {
+  margin: 1em 0 0.5em 0;
+  line-height: 1.3;
+}
+
+/* 改进的代码块样式 */
+.markdown-code-block {
+  margin: 1em 0;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
 }
