@@ -3,18 +3,6 @@
     <div class="sidebar-header">
       <h3>分支树</h3>
       <div class="sidebar-header-actions">
-        <!-- 在非收起状态下显示刷新按钮 -->
-        <button 
-          v-if="!isCollapsed" 
-          class="btn-refresh" 
-          @click="handleRefresh" 
-          title="刷新分支树"
-          :disabled="isStreaming"
-        >
-          <svg class="refresh-icon" viewBox="0 0 24 24" width="20" height="20">
-            <path fill="currentColor" d="M17.65,6.35C16.2,4.9 14.21,4 12,4A8,8 0 0,0 4,12A8,8 0 0,0 12,20C15.73,20 18.84,17.45 19.73,14H17.65C16.83,16.33 14.61,18 12,18A6,6 0 0,1 6,12A6,6 0 0,1 12,6C13.66,6 15.14,6.69 16.22,7.78L13,11H20V4L17.65,6.35Z"/>
-          </svg>
-        </button>
         <!-- 收起按钮 -->
         <button class="btn-toggle-sidebar" @click="handleToggleCollapse" :title="isCollapsed ? '展开侧边栏' : '收起侧边栏'">
           <svg v-if="isCollapsed" class="sidebar-icon" viewBox="0 0 24 24" width="20" height="20">
@@ -70,10 +58,6 @@ const emit = defineEmits<{
 }>()
 
 // 事件处理方法
-const handleRefresh = () => {
-  emit('refresh')
-}
-
 const handleToggleCollapse = () => {
   emit('toggle-collapse')
 }
@@ -178,77 +162,6 @@ const handleRequestDeleteThread = (payload: {
   min-height: 0;
 }
 
-/* 刷新按钮 - 现代AI风格 */
-.btn-refresh {
-  width: 36px;
-  height: 36px;
-  border: none;
-  background: linear-gradient(135deg, rgba(16, 185, 129, 0.15), rgba(34, 197, 94, 0.1));
-  border-radius: 10px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-  color: #10b981;
-  padding: 0;
-  flex-shrink: 0;
-  backdrop-filter: blur(8px);
-  position: relative;
-  overflow: hidden;
-  box-shadow: 0 2px 8px rgba(16, 185, 129, 0.2);
-}
-
-.btn-refresh::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: linear-gradient(135deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0));
-  opacity: 0;
-  transition: opacity 0.3s ease;
-}
-
-.btn-refresh:hover:not(:disabled) {
-  background: linear-gradient(135deg, rgba(16, 185, 129, 0.25), rgba(34, 197, 94, 0.2));
-  color: #059669;
-  transform: scale(1.05) translateY(-1px);
-  box-shadow: 0 8px 20px rgba(16, 185, 129, 0.3);
-}
-
-.btn-refresh:hover:not(:disabled)::before {
-  opacity: 1;
-}
-
-.btn-refresh:active:not(:disabled) {
-  transform: scale(0.95) translateY(0);
-}
-
-.btn-refresh:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-  transform: none;
-  box-shadow: 0 2px 8px rgba(16, 185, 129, 0.1);
-}
-
-/* 刷新图标动画 */
-.refresh-icon {
-  transition: transform 0.5s cubic-bezier(0.68, -0.55, 0.265, 1.55);
-  width: 20px;
-  height: 20px;
-}
-
-.btn-refresh:not(:disabled):hover .refresh-icon {
-  transform: rotate(180deg);
-}
-
-.btn-refresh:disabled .refresh-icon {
-  animation: spin 2s linear infinite;
-  opacity: 0.7;
-}
-
 @keyframes spin {
   0% { transform: rotate(0deg); }
   100% { transform: rotate(360deg); }
@@ -266,7 +179,7 @@ const handleRequestDeleteThread = (payload: {
   justify-content: center;
   cursor: pointer;
   transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-  color: #0ea5e9;
+  color: #0e86e9;
   padding: 0;
   flex-shrink: 0;
   backdrop-filter: blur(8px);

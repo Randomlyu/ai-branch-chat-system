@@ -1,27 +1,42 @@
 <template>
   <div class="messages-container" ref="messagesContainerRef">
-    <div v-for="(msg, index) in messages" :key="msg.id" class="message-item-wrapper">
-      <MessageItem
-        :msg="msg"
-        :is-streaming="isStreaming"
-        :is-latest-message="index === messages.length - 1"
-        :can-regenerate="canRegenerateMessage(msg)"
-        :regenerate-title="getRegenerateButtonTitle(msg)"
-        :can-create-branch="canCreateBranch(msg)"
-        :branch-title="getBranchButtonTitle(msg)"
-        :is-branching-point="checkIsMessageBranchingPoint(msg.id)"
-        :delete-title="getDeleteButtonTitle(msg)"
-        :can-edit="canEditMessage(msg)"
-        :edit-title="getEditButtonTitle(msg)"
-        :formatted-time="formatDateTime(msg.created_at)"
-        :formatted-content="getFormattedMessageContent(msg)"
-        :formatted-model-name="msg.model_used ? getModelDisplayName(msg.model_used) : ''"
-        @copy="handleCopyMessage"
-        @regenerate="handleRegenerateMessage"
-        @branch="handleCreateBranch"
-        @delete="handleDeleteMessage"
-        @edit="handleEditMessage"
-      />
+    <!-- 空状态：当没有消息时显示 -->
+    <div v-if="messages.length === 0" class="empty-state">
+      <div class="empty-state-icon">
+        <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+        </svg>
+      </div>
+      <div class="empty-state-title">你好！我是AI智能助手</div>
+      <div class="empty-state-description">试试问点什么，我会尽力帮您！</div>
+      <div class="empty-state-hint">发送消息开始对话</div>
+    </div>
+
+    <!-- 正常消息列表 -->
+    <div v-else>
+      <div v-for="(msg, index) in messages" :key="msg.id" class="message-item-wrapper">
+        <MessageItem
+          :msg="msg"
+          :is-streaming="isStreaming"
+          :is-latest-message="index === messages.length - 1"
+          :can-regenerate="canRegenerateMessage(msg)"
+          :regenerate-title="getRegenerateButtonTitle(msg)"
+          :can-create-branch="canCreateBranch(msg)"
+          :branch-title="getBranchButtonTitle(msg)"
+          :is-branching-point="checkIsMessageBranchingPoint(msg.id)"
+          :delete-title="getDeleteButtonTitle(msg)"
+          :can-edit="canEditMessage(msg)"
+          :edit-title="getEditButtonTitle(msg)"
+          :formatted-time="formatDateTime(msg.created_at)"
+          :formatted-content="getFormattedMessageContent(msg)"
+          :formatted-model-name="msg.model_used ? getModelDisplayName(msg.model_used) : ''"
+          @copy="handleCopyMessage"
+          @regenerate="handleRegenerateMessage"
+          @branch="handleCreateBranch"
+          @delete="handleDeleteMessage"
+          @edit="handleEditMessage"
+        />
+      </div>
     </div>
   </div>
 </template>
@@ -334,5 +349,46 @@ defineExpose({
     opacity: 1;
     transform: translateY(0);
   }
+}
+
+/* 空状态样式 */
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  min-height: 300px;
+  text-align: center;
+  color: #8c8c8c;
+  padding: 40px 20px;
+  user-select: none;
+}
+
+.empty-state-icon {
+  margin-bottom: 20px;
+  color: #d9d9d9;
+  opacity: 0.7;
+}
+
+.empty-state-title {
+  font-size: 18px;
+  font-weight: 500;
+  color: #595959;
+  margin-bottom: 8px;
+}
+
+.empty-state-description {
+  font-size: 14px;
+  color: #8c8c8c;
+  margin-bottom: 4px;
+  line-height: 1.5;
+}
+
+.empty-state-hint {
+  font-size: 13px;
+  color: #bfbfbf;
+  font-style: italic;
+  margin-top: 8px;
 }
 </style>

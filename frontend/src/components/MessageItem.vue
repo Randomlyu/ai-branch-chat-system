@@ -6,19 +6,54 @@
       { 'is-editing': msg.is_editing }
     ]"
   >
-    <div class="message-avatar">
-      {{ msg.role === 'user' ? '👤' : '🤖' }}
+    <!-- 简约头像区域 -->
+    <div class="message-avatar-container">
+      <div class="message-avatar">
+        <template v-if="msg.role === 'user'">
+          <!-- 简约用户图标 -->
+          <svg class="avatar-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M12 12C14.7614 12 17 9.76142 17 7C17 4.23858 14.7614 2 12 2C9.23858 2 7 4.23858 7 7C7 9.76142 9.23858 12 12 12Z" fill="currentColor"/>
+            <path d="M12 14.5C7.99 14.5 4.5 16.36 4.5 20.5C4.5 20.78 4.72 21 5 21H19C19.28 21 19.5 20.78 19.5 20.5C19.5 16.36 16.01 14.5 12 14.5Z" fill="currentColor"/>
+          </svg>
+        </template>
+        <template v-else>
+            <svg class="avatar-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bgGrad2" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#4F46E5"/>
+      <stop offset="100%" stop-color="#8B5CF6"/>
+    </linearGradient>
+  </defs>
+  <circle cx="12" cy="12" r="11" fill="url(#bgGrad2)"/>
+  
+  <!-- 外侧半透明轨道 -->
+  <path d="M18.5 12 A6.5 6.5 0 0 1 12 18.5" stroke="#FFFFFF" stroke-opacity="0.3" stroke-width="1.2" fill="none" stroke-linecap="round"/>
+  <path d="M5.5 12 A6.5 6.5 0 0 1 12 5.5" stroke="#FFFFFF" stroke-opacity="0.3" stroke-width="1.2" fill="none" stroke-linecap="round"/>
+  
+  <!-- 微调后的火花（稍微圆润的角） -->
+  <path d="M12 5.5L13.2 9.8L17.5 11L13.2 12.2L12 16.5L10.8 12.2L6.5 11L10.8 9.8L12 5.5Z" 
+        fill="#FFFFFF" stroke="#FFFFFF" stroke-width="0.3" stroke-linejoin="round"/>
+</svg>
+        </template>
+      </div>
     </div>
+
     <div class="message-content">
+      <!-- 简约消息元数据 -->
       <div class="message-meta">
-        <span class="message-role">{{ msg.role === 'user' ? '您' : 'AI助手' }}</span>
-        <span class="message-time">{{ formattedTime }}</span>
-        <span v-if="msg.model_used" class="message-model">({{ formattedModelName }})</span>
+        <div class="message-header">
+          <!-- 用户显示"您"，AI显示模型名称 -->
+          <span class="role-name">
+            {{ msg.role === 'user' ? '您' : formattedModelName }}
+          </span>
+          <span class="message-time">{{ formattedTime }}</span>
+        </div>
       </div>
 
+      <!-- 消息内容 -->
       <div 
-          class="message-text" 
-          v-html="formattedContent">
+        class="message-text" 
+        v-html="formattedContent">
       </div>
       
       <!-- 流式生成指示器 -->
@@ -26,7 +61,9 @@
         <div class="generating-dots">
           <span></span><span></span><span></span>
         </div>
-        <div class="generating-text">{{ formattedModelName || 'AI' }}正在生成...</div>
+        <div class="generating-text">
+          <span class="model-name">{{ formattedModelName || 'AI' }}</span> 正在思考中...
+        </div>
       </div>
       
       <!-- AI消息操作按钮 -->
@@ -206,7 +243,6 @@ const isGenerating = computed(() => {
   word-wrap: break-word;
   overflow-wrap: break-word;
   word-break: break-word;
-  /* 设置消息气泡的最大宽度，不占满整个内容容器 */
   max-width: 100%; /* 占满.message-content，但.message-content已经有最大宽度限制 */
   width: fit-content; /* 根据内容自适应宽度 */
   min-width: auto; /* 最小宽度，避免太短的消息看起来奇怪 */
@@ -230,7 +266,7 @@ const isGenerating = computed(() => {
   margin-right: auto; /* 确保左对齐 */
   min-width: auto;
   /* 气泡样式 */
-  background: white;
+  background: rgb(244, 237, 255);
   border: 1px solid rgba(0, 0, 0, 0.06);
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
   padding: 12px 16px; /* 恢复内边距 */
@@ -321,61 +357,79 @@ const isGenerating = computed(() => {
   align-items: flex-end;
 }
 
-/* 消息头像 */
-.message-avatar {
-  width: 36px;
-  height: 36px;
-  border-radius: 6px;
-  background: rgba(0, 0, 0, 0.05);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 20px;
+/* 简约头像容器样式 */
+.message-avatar-container {
+  position: relative;
   flex-shrink: 0;
+  display: flex;
+  align-items: flex-start;
   margin-top: 4px;
 }
 
+.message-avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  background: #f5f5f5;
+  transition: all 0.2s ease;
+}
+
+/* 用户头像样式 */
 .user .message-avatar {
-  background: rgba(59, 130, 246, 0.1);
-  color: #3b82f6;
+  background: #d2e4ff;
+  color: #0664fc;
 }
 
+/* 助理头像样式 */
 .assistant .message-avatar {
-  background: rgba(16, 185, 129, 0.1);
-  color: #10b981;
+  background: #a9a1f0;
 }
 
+.avatar-icon {
+  width: 20px;
+  height: 20px;
+}
+
+/* 简约消息元数据布局 */
 .message-meta {
+  margin-bottom: 6px;
+}
+
+.message-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  font-size: 13px;
-  color: #666;
-  margin-bottom: 4px;
   flex-wrap: wrap;
   gap: 8px;
 }
 
-.message-role {
+.role-name {
+  font-size: 13px;
   font-weight: 600;
+  color: #374151;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 200px;
 }
 
-.user .message-role {
+.user .role-name {
   color: #3b82f6;
 }
 
-.assistant .message-role {
-  color: #10b981;
+.assistant .role-name {
+  color: #4505d8;
 }
 
 .message-time {
-  color: #888;
-}
-
-.message-model {
-  color: #888;
-  font-style: italic;
+  font-size: 12px;
+  color: #9ca3af;
+  white-space: nowrap;
+  font-weight: 400;
 }
 
 /* 生成指示器样式 */
@@ -410,6 +464,14 @@ const isGenerating = computed(() => {
 .generating-text {
   font-size: 12px;
   color: #666;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.model-name {
+  font-weight: 600;
+  color: #3b82f6;
 }
 
 @keyframes bounce {

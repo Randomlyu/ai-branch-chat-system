@@ -71,31 +71,9 @@
       </div>
     </div>
     
-    <!-- AI用量信息 -->
-    <div class="usage-info" v-if="aiUsage && !isCollapsed">
-      <div class="usage-title">用量统计</div>
-      <div class="usage-progress">
-        <div 
-          class="usage-progress-bar" 
-          :style="{ width: `${Math.min(100, (aiUsage.total_tokens / aiUsage.max_daily_tokens) * 100)}%` }"
-          :class="{ 'near-limit': (aiUsage.total_tokens / aiUsage.max_daily_tokens) > 0.8 }"
-        ></div>
-      </div>
-      <div class="usage-details">
-        <span class="usage-text">
-          已用: {{ formatNumber(aiUsage.total_tokens) }} / {{ formatNumber(aiUsage.max_daily_tokens) }} tokens
-        </span>
-        <span class="usage-percentage">
-          {{ Math.round((aiUsage.total_tokens / aiUsage.max_daily_tokens) * 100) }}%
-        </span>
-      </div>
-      <div class="usage-date" v-if="nextResetTime">下次重置: {{ formatResetTime(nextResetTime) }}</div>
-      <div class="usage-date" v-else-if="aiUsage.current_date">重置日期: {{ formatDate(aiUsage.current_date) }}</div>
-      <div class="usage-date" v-else>重置时间: 未知</div>
-    </div>
-    
     <UserInfo
       :collapsed="isCollapsed"
+      :ai-usage="aiUsage"
       :show-change-password-button="!isCollapsed"
       @change-password="$emit('change-password')"
       @logout="$emit('logout')"
@@ -105,13 +83,13 @@
 </template>
 
 <script setup lang="ts">
-import { ref, nextTick, computed } from 'vue'
-import { formatTime, formatNumber } from '@/utils/formatters'
+import { ref, nextTick } from 'vue'
+import { formatTime } from '@/utils/formatters'
 import type { Conversation } from '@/types/chat'
 import UserInfo from '@/components/UserInfo.vue'
 
 // 定义Props
-const props = defineProps<{
+defineProps<{
   conversations: Conversation[]
   currentConversation: Conversation | null
   aiUsage?: {
@@ -143,39 +121,6 @@ const editingConversationId = ref<number | null>(null)
 const editingTitle = ref('')
 const titleInput = ref<HTMLInputElement>()
 
-// 计算下次重置时间（兼容旧版API）
-const nextResetTime = computed(() => {
-  if (!props.aiUsage) return null
-  
-  // 如果有后端返回的next_reset，直接使用
-  if (props.aiUsage.next_reset) {
-    return props.aiUsage.next_reset
-  }
-  
-  // 如果有timestamp，转换为ISO字符串
-  if (props.aiUsage.next_reset_timestamp) {
-    return new Date(props.aiUsage.next_reset_timestamp).toISOString()
-  }
-  
-  // 如果没有next_reset信息，根据current_date计算
-  if (props.aiUsage.current_date) {
-    try {
-      const today = new Date(props.aiUsage.current_date)
-      // 计算明天0点（北京时间）
-      const tomorrow = new Date(today)
-      tomorrow.setDate(today.getDate() + 1)
-      tomorrow.setHours(0, 0, 0, 0)
-      
-      // 转换为ISO字符串
-      return tomorrow.toISOString()
-    } catch (e) {
-      console.error('计算重置时间失败:', e)
-    }
-  }
-  
-  return null
-})
-
 // 方法
 const handleCreateConversation = () => {
   emit('create-conversation')
@@ -202,54 +147,6 @@ const handleSaveTitle = (conversationId: number) => {
 const cancelEditTitle = () => {
   editingConversationId.value = null
   editingTitle.value = ''
-}
-
-// 新增格式化函数
-const formatResetTime = (timestamp: string | undefined | null): string => {
-  if (!timestamp) return '未知'
-  
-  try {
-    const resetTime = new Date(timestamp)
-    
-    // 检查是否为无效日期
-    if (isNaN(resetTime.getTime())) {
-      return '未知'
-    }
-    
-    // 转换为北京时间
-    const beijingTime = new Date(resetTime.getTime() + 8 * 60 * 60 * 1000)
-    
-    const year = beijingTime.getUTCFullYear()
-    const month = String(beijingTime.getUTCMonth() + 1).padStart(2, '0')
-    const day = String(beijingTime.getUTCDate()).padStart(2, '0')
-    const hours = String(beijingTime.getUTCHours()).padStart(2, '0')
-    const minutes = String(beijingTime.getUTCMinutes()).padStart(2, '0')
-    
-    // 直接显示完整时间，例如：2026-03-30 00:00
-    return `${year}-${month}-${day} ${hours}:${minutes}`
-  } catch {
-    return '未知'
-  }
-}
-
-// 简单日期格式化
-const formatDate = (dateStr: string | undefined): string => {
-  if (!dateStr) return '未知'
-  
-  try {
-    const date = new Date(dateStr)
-    if (isNaN(date.getTime())) {
-      return dateStr
-    }
-    
-    const year = date.getFullYear()
-    const month = String(date.getMonth() + 1).padStart(2, '0')
-    const day = String(date.getDate()).padStart(2, '0')
-    
-    return `${year}-${month}-${day}`
-  } catch {
-    return dateStr
-  }
 }
 
 // 暴露方法供父组件调用
@@ -294,7 +191,6 @@ defineExpose({
 /* 侧边栏收起时隐藏内容 */
 .left-sidebar.collapsed .sidebar-header h2,
 .left-sidebar.collapsed .conversations-list,
-.left-sidebar.collapsed .usage-info,
 .left-sidebar.collapsed .btn-new-chat {
   display: none;
 }
@@ -355,71 +251,6 @@ defineExpose({
 
 .left-sidebar.collapsed .conversations-list {
   display: none;
-}
-
-/* 用量信息 - 固定在对话列表下方 */
-.usage-info {
-  flex-shrink: 0; /* 防止被压缩 */
-  padding: 16px 20px;
-  border-bottom: 1px solid rgba(0, 0, 0, 0.08);
-  background: rgba(249, 250, 251, 0.8);
-}
-
-.usage-title {
-  font-size: 12px;
-  font-weight: 600;
-  color: #666;
-  margin-bottom: 8px;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
-
-.usage-progress {
-  height: 6px;
-  background: rgba(0, 0, 0, 0.1);
-  border-radius: 3px;
-  overflow: hidden;
-  margin-bottom: 8px;
-}
-
-.usage-progress-bar {
-  height: 100%;
-  background: linear-gradient(90deg, #10b981, #3b82f6);
-  border-radius: 3px;
-  transition: width 0.3s ease;
-}
-
-.usage-progress-bar.near-limit {
-  background: linear-gradient(90deg, #f59e0b, #ef4444);
-  animation: pulse-warning 2s infinite;
-}
-
-@keyframes pulse-warning {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.8; }
-}
-
-.usage-details {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  font-size: 12px;
-  margin-bottom: 4px;
-}
-
-.usage-text {
-  color: #666;
-}
-
-.usage-percentage {
-  font-weight: 600;
-  color: #3b82f6;
-}
-
-.usage-date {
-  font-size: 11px;
-  color: #888;
-  text-align: center;
 }
 
 /* 对话项样式保持不变 */
