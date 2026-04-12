@@ -61,13 +61,18 @@ app = FastAPI(
 )
 
 # 配置CORS
+# 从环境变量读取允许的源，支持多个域名用逗号分隔
+origins_str = os.getenv("CORS_ORIGINS", "http://localhost:5173")
+origins = [origin.strip() for origin in origins_str.split(",")]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],  # Vue开发服务器地址
+    allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+print(f"✅ CORS允许的域名: {origins}")
 
 # 包含路由器
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["认证"])

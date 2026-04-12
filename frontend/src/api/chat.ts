@@ -24,13 +24,18 @@ import type {
 import { useAuthStore } from '@/stores/auth'
 
 // ========== 创建axios实例 ==========
+// 从环境变量读取API基础URL，默认使用本地开发地址
+const baseURL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api/v1';
+
 const apiClient = axios.create({
-  baseURL: 'http://localhost:8000/api/v1',
+  baseURL: baseURL,
   timeout: 30000, // 30秒超时
   headers: {
     'Content-Type': 'application/json',
   }
 })
+
+console.log(`API基础URL: ${baseURL}`); //调试
 
 // ========== 请求拦截器 ==========
 apiClient.interceptors.request.use(
@@ -507,10 +512,8 @@ export default {
   sendMessageStream,  // 流式发送消息
   deleteMessage,
   regenerateMessageStream,  // 流式重新生成消息
-  // ===== 新增：消息编辑相关API =====
   checkMessageEditable,
   updateUserMessageStream,
-  // ================================
   
   // AI相关
   stopGeneration,
