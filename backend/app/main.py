@@ -57,7 +57,7 @@ init_users()
 app = FastAPI(
     title="AI分支对话系统API",
     description="支持分支对话的AI聊天系统",
-    version="1.0.0"
+    version="3.0"
 )
 
 # 配置CORS

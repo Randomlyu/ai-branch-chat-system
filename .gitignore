@@ -1,3 +1,4 @@
 backend/sql_app.db
 backend/.env
 backend/token_usage.json
+frontend/.env.production
